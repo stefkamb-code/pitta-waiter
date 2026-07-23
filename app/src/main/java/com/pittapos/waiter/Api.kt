@@ -56,6 +56,7 @@ data class SubmitOrderRequest(
     val table: Int,
     val pin: String,
     val lines: List<OrderLineRequest>,
+    val note: String? = null,
 )
 
 data class SubmitOrderResponse(
@@ -77,6 +78,7 @@ data class TableOrderDto(
     val timeLabel: String,
     val total: Double,
     val lines: List<TableOrderLineDto>,
+    val note: String = "",
 )
 
 data class SettleLineRequest(
@@ -84,6 +86,8 @@ data class SettleLineRequest(
     val orderNumber: Int,
     val lineIndex: Int,
 )
+
+data class CloseTableRequest(val pin: String)
 
 interface PittaApi {
     @GET("api/tables")
@@ -103,6 +107,9 @@ interface PittaApi {
 
     @POST("api/tables/{table}/settle")
     suspend fun settleLine(@Path("table") table: Int, @Body request: SettleLineRequest): Response<Unit>
+
+    @POST("api/tables/{table}/close")
+    suspend fun closeTable(@Path("table") table: Int, @Body request: CloseTableRequest): Response<Unit>
 }
 
 /** Το POS τρέχει μέσα στο ίδιο WiFi του μαγαζιού — χωρίς HTTPS, δεν χρειάζεται πιστοποιητικό. */
