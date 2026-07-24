@@ -169,12 +169,8 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
                         Button(
                             enabled = !settling,
                             onClick = { settleSelected() },
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        ) { Text("✓ ΠΛΗΡΩΜΕΝΑ", fontWeight = FontWeight.Bold) }
-                        TextButton(
-                            onClick = { selected.clear() },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("ΑΠΟΕΠΙΛΟΓΗ", fontWeight = FontWeight.Bold) }
+                        ) { Text("✓ ΠΛΗΡΩΜΕΝΑ", fontWeight = FontWeight.Bold) }
                     }
                 }
             } else if (orders.isNotEmpty()) {
