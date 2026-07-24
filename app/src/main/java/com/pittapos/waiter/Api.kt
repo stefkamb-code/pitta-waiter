@@ -112,19 +112,36 @@ interface PittaApi {
     suspend fun closeTable(@Path("table") table: Int, @Body request: CloseTableRequest): Response<Unit>
 }
 
-/** Το POS τρέχει μέσα στο ίδιο WiFi του μαγαζιού — χωρίς HTTPS, δεν χρειάζεται πιστοποιητικό. */
+/**
+ * Το POS τρέχει μέσα στο ίδιο WiFi του μαγαζιού — χωρίς HTTPS, δεν χρειάζεται πιστοποιητικό.
+ *
+ * Κρατάμε ένα μόνο PittaApi (άρα ένα OkHttpClient/thread pool) ανά διεύθυνση server: το ΤΡΑΠΕΖΙΑ
+ * ρωτάει κάθε 4" όσο η οθόνη είναι ανοιχτή· αν φτιάχναμε καινούριο OkHttpClient σε κάθε κλήση θα
+ * γεννιόντουσαν εκατοντάδες νήματα/connection pools ανά ώρα βάρδιας, με κίνδυνο η εφαρμογή να
+ * γίνεται σταδιακά πιο αργή.
+ */
 object ApiClient {
+    @Volatile private var cachedUrl: String? = null
+    @Volatile private var cachedApi: PittaApi? = null
+
     fun create(baseUrl: String): PittaApi {
-        val url = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        val client = OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(8, TimeUnit.SECONDS)
-            .build()
-        return Retrofit.Builder()
-            .baseUrl(url)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(PittaApi::class.java)
+        cachedApi?.let { if (cachedUrl == baseUrl) return it }
+        synchronized(this) {
+            cachedApi?.let { if (cachedUrl == baseUrl) return it }
+            val url = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+            val client = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(8, TimeUnit.SECONDS)
+                .build()
+            val api = Retrofit.Builder()
+                .baseUrl(url)
+                .client(client)
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+                .create(PittaApi::class.java)
+            cachedUrl = baseUrl
+            cachedApi = api
+            return api
+        }
     }
 }

@@ -21,6 +21,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -46,10 +49,16 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
         loading = false
     }
 
-    LaunchedEffect(serverUrl) {
-        while (true) {
-            load()
-            delay(4000)
+    // Δεμένο στο lifecycle της οθόνης: όταν η εφαρμογή πάει background (κλείδωμα κινητού, αλλαγή
+    // εφαρμογής) το polling σταματά αντί να χτυπάει το ταμείο κάθε 4" επ' αόριστον, και ξαναρχίζει
+    // μόνο του μόλις η οθόνη ξαναγίνει ορατή.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(serverUrl, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                load()
+                delay(4000)
+            }
         }
     }
 
