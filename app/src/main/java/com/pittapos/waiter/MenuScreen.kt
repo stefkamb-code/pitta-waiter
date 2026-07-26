@@ -438,6 +438,9 @@ private fun CustomizerSheet(
     val removed = remember { mutableStateListOf<String>().apply { initial?.removedIngredients?.let(::addAll) } }
     val extraQty = remember { mutableStateMapOf<String, Int>().apply { initial?.extras?.let(::putAll) } }
     var note by remember { mutableStateOf(initial?.note ?: "") }
+    // Το bottom sheet κλείνει με animation — ένα γρήγορο διπλό tap στο ΠΡΟΣΘΗΚΗ προλαβαίνει να πατηθεί
+    // δύο φορές πριν προλάβει να κλείσει, προσθέτοντας το ίδιο είδος διπλό στο καλάθι.
+    var submitted by remember { mutableStateOf(false) }
 
     val extrasCost = options.extras.sumOf { (extraQty[it.name] ?: 0) * it.price }
     val unitPrice = product.price + extrasCost
@@ -527,8 +530,11 @@ private fun CustomizerSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
+                enabled = !submitted,
                 shape = MaterialTheme.shapes.medium,
                 onClick = {
+                    if (submitted) return@Button
+                    submitted = true
                     val descLine1 = selectedBread + " πίττα" + (if (note.isNotBlank()) " · ${note.trim()}" else "")
                     val mods = buildList {
                         addAll(removed.map { "χωρίς " + it.replaceFirstChar(Char::lowercaseChar) })

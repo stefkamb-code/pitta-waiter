@@ -6,6 +6,10 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -21,6 +25,27 @@ class MainActivity : ComponentActivity() {
             PittaWaiterTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val navController = rememberNavController()
+
+                    // Ένα γρήγορο διπλό/πολλαπλό tap (βιαστικός σερβιτόρος, δάχτυλο που γλιστράει) μπορεί
+                    // να καλέσει navigate()/popBackStack() πολλές φορές πριν προλάβει να αλλάξει η οθόνη.
+                    // Χωρίς φραγή αυτό είτε στοιβάζει το ίδιο βήμα πολλές φορές (το «πίσω» φαίνεται σαν να
+                    // έχει κολλήσει, χρειάζεται πολλά πατήματα για να προχωρήσει) είτε, αν χτυπηθεί αρκετές
+                    // φορές το βελάκι «πίσω» στην πρώτη πραγματική οθόνη, αδειάζει τελείως το back stack —
+                    // η οθόνη μένει λευκή γιατί δεν απομένει κανένας προορισμός να δείξει το NavHost.
+                    var lastNavAt by remember { mutableStateOf(0L) }
+                    fun debounced(action: () -> Unit) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastNavAt < 400) return
+                        lastNavAt = now
+                        action()
+                    }
+                    fun safeNavigate(route: String) = debounced {
+                        navController.navigate(route) { launchSingleTop = true }
+                    }
+                    fun safeBack() = debounced {
+                        if (navController.previousBackStackEntry != null) navController.popBackStack()
+                    }
+
                     NavHost(navController = navController, startDestination = "splash") {
                         composable("splash") {
                             SplashScreen(onFinished = {
@@ -32,7 +57,7 @@ class MainActivity : ComponentActivity() {
                         composable("tables") {
                             TablesScreen(
                                 prefs = prefs,
-                                onOpenTable = { table -> navController.navigate("tableDetail/$table") },
+                                onOpenTable = { table -> safeNavigate("tableDetail/$table") },
                             )
                         }
                         composable(
@@ -43,8 +68,8 @@ class MainActivity : ComponentActivity() {
                             TableDetailScreen(
                                 prefs = prefs,
                                 table = table,
-                                onAddMore = { navController.navigate("menu/$table") },
-                                onBack = { navController.popBackStack() },
+                                onAddMore = { safeNavigate("menu/$table") },
+                                onBack = { safeBack() },
                             )
                         }
                         composable(
@@ -55,7 +80,7 @@ class MainActivity : ComponentActivity() {
                             MenuScreen(
                                 prefs = prefs,
                                 table = table,
-                                onDone = { navController.popBackStack() },
+                                onDone = { safeBack() },
                             )
                         }
                     }

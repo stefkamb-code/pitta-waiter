@@ -89,7 +89,7 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { scope.launch { loading = true; load() } }) {
+                    IconButton(onClick = { scope.launch { loading = true; load() } }, enabled = !loading) {
                         Icon(Icons.Default.Refresh, contentDescription = "Ανανέωση")
                     }
                     IconButton(onClick = { showSettings = true }) {
