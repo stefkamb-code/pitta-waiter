@@ -479,6 +479,8 @@ private fun CustomizerSheet(
     onDismiss: () -> Unit,
     onAdd: (DraftLine) -> Unit,
 ) {
+    val noteFocusManager = LocalFocusManager.current
+    val noteKeyboardController = LocalSoftwareKeyboardController.current
     val breadChoice = hasBreadChoice(category)
     val fuseBread = fuseBreadIntoName(category)
     var quantity by remember { mutableStateOf(initial?.quantity ?: 1) }
@@ -494,6 +496,43 @@ private fun CustomizerSheet(
     val unitPrice = product.price + extrasCost
     val lineTotal = unitPrice * quantity
 
+    // Κοινή λογική "πρόσθεσε στο καλάθι" — καλείται είτε από το κουμπί πάνω δεξιά (γρήγορη αλλαγή, π.χ.
+    // μόνο το ψωμί, χωρίς να χρειάζεται σκρολ μέχρι κάτω) είτε από το κανονικό κουμπί στο τέλος της φόρμας.
+    fun submit() {
+        if (submitted) return
+        submitted = true
+        // Ίδια λογική κατηγορίας με το ταμείο (βλ. CustomizerViewModel.Add στο PittaPos.App):
+        // ΤΥΛΙΧΤΑ χωνεύουν το ψωμί στο όνομα, ΜΕΡΙΔΕΣ το δείχνουν σε ξεχωριστή γραμμή ολόγραφο,
+        // άλλες κατηγορίες δεν αναφέρουν καθόλου ψωμί.
+        val noteTrimmed = note.trim()
+        val lineName = if (breadChoice && fuseBread) composeCustomizedName(product.name, selectedBread) else product.name
+        val descLine1 = when {
+            !breadChoice -> noteTrimmed
+            fuseBread -> noteTrimmed
+            noteTrimmed.isNotEmpty() -> selectedBread + "\n" + noteTrimmed
+            else -> selectedBread
+        }
+        val mods = buildList {
+            addAll(describeRemovedIngredients(removed, options.ingredients))
+            addAll(extraQty.filterValues { it > 0 }.map { (name, qty) -> "+ $name" + (if (qty > 1) " ×$qty" else "") })
+        }
+        val details = (listOf(descLine1) + mods).filter { it.isNotEmpty() }.joinToString("\n")
+        onAdd(
+            DraftLine(
+                key = "",
+                productId = product.id,
+                name = lineName,
+                unitPrice = unitPrice,
+                quantity = quantity,
+                bread = if (breadChoice) selectedBread else null,
+                removedIngredients = removed.toList(),
+                extras = extraQty.filterValues { it > 0 }.toMap(),
+                note = noteTrimmed,
+                details = details,
+            ),
+        )
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -501,11 +540,25 @@ private fun CustomizerSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
-            Text(product.name, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-            Text(
-                String.format(Locale.getDefault(), "από €%.2f", product.price),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(product.name, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text(
+                        String.format(Locale.getDefault(), "από €%.2f", product.price),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // Γρήγορη προσθήκη πάνω δεξιά — για μια απλή αλλαγή (π.χ. μόνο αραβική αντί για ελληνική
+                // πίτα) δεν χρειάζεται σκρολ μέχρι το κουμπί στο τέλος της φόρμας, μετά από όλα τα υλικά/
+                // έξτρα. Χωρίς τιμή πάνω — μόνο εικονίδιο, η τιμή φαίνεται ήδη στο κανονικό κουμπί κάτω.
+                FilledIconButton(
+                    enabled = !submitted,
+                    shape = MaterialTheme.shapes.medium,
+                    onClick = { submit() },
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Γρήγορη προσθήκη")
+                }
+            }
             Spacer(Modifier.height(20.dp))
 
             if (breadChoice && options.breads.isNotEmpty()) {
@@ -568,6 +621,12 @@ private fun CustomizerSheet(
                 label = { Text("Σημείωση (προαιρετικό)") },
                 modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.small,
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                    noteFocusManager.clearFocus()
+                    noteKeyboardController?.hide()
+                }),
             )
             Spacer(Modifier.height(20.dp))
 
@@ -580,40 +639,7 @@ private fun CustomizerSheet(
             Button(
                 enabled = !submitted,
                 shape = MaterialTheme.shapes.medium,
-                onClick = {
-                    if (submitted) return@Button
-                    submitted = true
-                    // Ίδια λογική κατηγορίας με το ταμείο (βλ. CustomizerViewModel.Add στο PittaPos.App):
-                    // ΤΥΛΙΧΤΑ χωνεύουν το ψωμί στο όνομα, ΜΕΡΙΔΕΣ το δείχνουν σε ξεχωριστή γραμμή ολόγραφο,
-                    // άλλες κατηγορίες δεν αναφέρουν καθόλου ψωμί.
-                    val noteTrimmed = note.trim()
-                    val lineName = if (breadChoice && fuseBread) composeCustomizedName(product.name, selectedBread) else product.name
-                    val descLine1 = when {
-                        !breadChoice -> noteTrimmed
-                        fuseBread -> noteTrimmed
-                        noteTrimmed.isNotEmpty() -> selectedBread + "\n" + noteTrimmed
-                        else -> selectedBread
-                    }
-                    val mods = buildList {
-                        addAll(describeRemovedIngredients(removed, options.ingredients))
-                        addAll(extraQty.filterValues { it > 0 }.map { (name, qty) -> "+ $name" + (if (qty > 1) " ×$qty" else "") })
-                    }
-                    val details = (listOf(descLine1) + mods).filter { it.isNotEmpty() }.joinToString("\n")
-                    onAdd(
-                        DraftLine(
-                            key = "",
-                            productId = product.id,
-                            name = lineName,
-                            unitPrice = unitPrice,
-                            quantity = quantity,
-                            bread = if (breadChoice) selectedBread else null,
-                            removedIngredients = removed.toList(),
-                            extras = extraQty.filterValues { it > 0 }.toMap(),
-                            note = noteTrimmed,
-                            details = details,
-                        ),
-                    )
-                },
+                onClick = { submit() },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
                 Text(
