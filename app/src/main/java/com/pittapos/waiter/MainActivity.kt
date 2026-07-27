@@ -2,6 +2,7 @@ package com.pittapos.waiter
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -14,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 
@@ -44,6 +46,18 @@ class MainActivity : ComponentActivity() {
                     }
                     fun safeBack() = debounced {
                         if (navController.previousBackStackEntry != null) navController.popBackStack()
+                    }
+
+                    // Το ίδιο πρόβλημα (και η ίδια λευκή οθόνη) μπορεί να ξαναγίνει και από το φυσικό/gesture
+                    // κουμπί «πίσω» της συσκευής, όχι μόνο από το δικό μας βελάκι: αυτό περνάει κατευθείαν από
+                    // τον εσωτερικό χειριστή του NavHost, χωρίς κανένα ντεμπάουνς. Ένας βιαστικός σερβιτόρος
+                    // που πατάει επανειλημμένα το πίσω της συσκευής μπορεί να αδειάσει το back stack πιο γρήγορα
+                    // απ' όσο προλαβαίνει να ανανεωθεί η οθόνη. Το πιάνουμε εδώ, μία φορά, κεντρικά, και το
+                    // περνάμε από το ίδιο debounce με το βελάκι· ο πιο εσωτερικός BackHandler του MenuScreen
+                    // (κατηγορία -> λίστα κατηγοριών) παραμένει προτεραίος όσο είναι ενεργός.
+                    val currentEntry by navController.currentBackStackEntryAsState()
+                    BackHandler(enabled = currentEntry != null && navController.previousBackStackEntry != null) {
+                        safeBack()
                     }
 
                     NavHost(navController = navController, startDestination = "splash") {

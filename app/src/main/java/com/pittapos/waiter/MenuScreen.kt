@@ -30,6 +30,40 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** Ίδια λογική κατηγορίας με το ταμείο (βλ. MenuSeed.HasBreadChoice στο PittaPos.Core) — μόνο τα ΤΥΛΙΧΤΑ
+ * και οι ΜΕΡΙΔΕΣ/ΜΕΡΙΔΕΣ ΠΑΠΠΟΥ έχουν καθόλου επιλογή ψωμιού, ώστε το κινητό να δείχνει το ίδιο με το ταμείο. */
+private fun hasBreadChoice(category: String) =
+    category == "ΤΥΛΙΧΤΑ" || category == "ΜΕΡΙΔΕΣ" || category == "ΜΕΡΙΔΕΣ ΠΑΠΠΟΥ"
+
+/** Μόνο τα ΤΥΛΙΧΤΑ χωνεύουν το ψωμί μέσα στο όνομα («ΑΡ. Κοτόπουλο») — οι ΜΕΡΙΔΕΣ το δείχνουν σε
+ * ξεχωριστή γραμμή ολόγραφο (βλ. CustomizerSheet), δεν βγάζει νόημα «ΑΡ. Μερίδα κοτόπουλο». */
+private fun fuseBreadIntoName(category: String) = category == "ΤΥΛΙΧΤΑ"
+
+private fun breadAbbreviation(bread: String) = when (bread) {
+    "Ελληνική" -> "ΕΛ."
+    "Αραβική" -> "ΑΡ."
+    "Ψωμί" -> "Ψ."
+    else -> if (bread.isNotEmpty()) bread.take(1).uppercase() + "." else ""
+}
+
+private fun composeCustomizedName(productName: String, bread: String): String {
+    val prefix = "Πίττα "
+    val rest = if (productName.startsWith(prefix, ignoreCase = true)) productName.substring(prefix.length) else productName
+    return breadAbbreviation(bread) + " " + rest
+}
+
+/** Ίδιο κατώφλι με το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients) — 3+ αφαιρέσεις γίνονται
+ * «μόνο με:» + ένα υλικό ανά γραμμή αντί για μακριά λίστα «χωρίς Χ · χωρίς Υ». */
+private fun describeRemovedIngredients(removed: List<String>, allIngredients: List<String>): List<String> {
+    if (removed.isEmpty()) return emptyList()
+    if (removed.size >= allIngredients.size) return listOf("σκέτο")
+    if (removed.size >= 3) {
+        val remaining = allIngredients.filter { it !in removed }.map { it.replaceFirstChar(Char::lowercaseChar) }
+        return listOf("μόνο με:") + remaining
+    }
+    return removed.map { "χωρίς " + it.replaceFirstChar(Char::lowercaseChar) }
+}
+
 /** Μία γραμμή προς αποστολή· τα customization πεδία μένουν null για απλά προϊόντα χωρίς customizer. */
 private data class DraftLine(
     val key: String,
@@ -55,6 +89,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
     var customizingProduct by remember { mutableStateOf<MenuProductDto?>(null) }
+    var customizingCategory by remember { mutableStateOf("") }
     val cartLines = remember { mutableStateListOf<DraftLine>() }
     var lineCounter by remember { mutableStateOf(0) }
     val snackbarHost = remember { SnackbarHostState() }
@@ -88,11 +123,19 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     fun simpleQuantity(product: MenuProductDto): Int =
         cartLines.firstOrNull { it.key == "p:${product.id}" }?.quantity ?: 0
 
-    fun changeSimpleQuantity(product: MenuProductDto, delta: Int) {
+    fun changeSimpleQuantity(product: MenuProductDto, category: String, delta: Int) {
         val key = "p:${product.id}"
         val idx = cartLines.indexOfFirst { it.key == key }
         if (idx < 0) {
-            if (delta > 0) cartLines.add(DraftLine(key, product.id, product.name, product.price, 1))
+            if (delta > 0) {
+                // Ίδια λογική με το ταμείο (βλ. ProductsViewModel.TapProduct) — ένα γρήγορο tap σε
+                // customizable προϊόν παίρνει το προεπιλεγμένο ψωμί, ώστε το όνομα να δείχνει ήδη ό,τι θα
+                // έβγαινε αν είχε ανοίξει κανείς τον customizer, όχι το γυμνό όνομα προϊόντος.
+                val defaultBread = customizerOptions?.breads?.firstOrNull() ?: ""
+                val name = if (product.customizable && hasBreadChoice(category) && fuseBreadIntoName(category))
+                    composeCustomizedName(product.name, defaultBread) else product.name
+                cartLines.add(DraftLine(key, product.id, name, product.price, 1))
+            }
             return
         }
         val newQty = cartLines[idx].quantity + delta
@@ -116,6 +159,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
         val product = categories.flatMap { it.products }.firstOrNull { it.id == line.productId } ?: return
         editingLine = line
         customizingProduct = product
+        customizingCategory = categories.firstOrNull { cat -> cat.products.any { it.id == line.productId } }?.name ?: ""
     }
 
     if (showCartReview) {
@@ -134,6 +178,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
         customizerOptions?.let { options ->
             CustomizerSheet(
                 product = product,
+                category = customizingCategory,
                 options = options,
                 initial = editingLine,
                 onDismiss = { customizingProduct = null; editingLine = null },
@@ -276,8 +321,8 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                         ProductCard(
                             product = product,
                             quantity = simpleQuantity(product),
-                            onOpenCustomizer = { customizingProduct = product },
-                            onInc = { changeSimpleQuantity(product, 1) },
+                            onOpenCustomizer = { customizingProduct = product; customizingCategory = category.name },
+                            onInc = { changeSimpleQuantity(product, category.name, 1) },
                         )
                     }
                 }
@@ -428,11 +473,14 @@ private fun ProductCard(
 @Composable
 private fun CustomizerSheet(
     product: MenuProductDto,
+    category: String,
     options: CustomizerOptionsDto,
     initial: DraftLine? = null,
     onDismiss: () -> Unit,
     onAdd: (DraftLine) -> Unit,
 ) {
+    val breadChoice = hasBreadChoice(category)
+    val fuseBread = fuseBreadIntoName(category)
     var quantity by remember { mutableStateOf(initial?.quantity ?: 1) }
     var selectedBread by remember { mutableStateOf(initial?.bread ?: options.breads.firstOrNull() ?: "") }
     val removed = remember { mutableStateListOf<String>().apply { initial?.removedIngredients?.let(::addAll) } }
@@ -460,7 +508,7 @@ private fun CustomizerSheet(
             )
             Spacer(Modifier.height(20.dp))
 
-            if (options.breads.isNotEmpty()) {
+            if (breadChoice && options.breads.isNotEmpty()) {
                 SectionLabel("Ψωμί")
                 options.breads.forEach { bread ->
                     SelectableRow(selected = selectedBread == bread, onClick = { selectedBread = bread }) {
@@ -535,23 +583,33 @@ private fun CustomizerSheet(
                 onClick = {
                     if (submitted) return@Button
                     submitted = true
-                    val descLine1 = selectedBread + " πίττα" + (if (note.isNotBlank()) " · ${note.trim()}" else "")
+                    // Ίδια λογική κατηγορίας με το ταμείο (βλ. CustomizerViewModel.Add στο PittaPos.App):
+                    // ΤΥΛΙΧΤΑ χωνεύουν το ψωμί στο όνομα, ΜΕΡΙΔΕΣ το δείχνουν σε ξεχωριστή γραμμή ολόγραφο,
+                    // άλλες κατηγορίες δεν αναφέρουν καθόλου ψωμί.
+                    val noteTrimmed = note.trim()
+                    val lineName = if (breadChoice && fuseBread) composeCustomizedName(product.name, selectedBread) else product.name
+                    val descLine1 = when {
+                        !breadChoice -> noteTrimmed
+                        fuseBread -> noteTrimmed
+                        noteTrimmed.isNotEmpty() -> selectedBread + "\n" + noteTrimmed
+                        else -> selectedBread
+                    }
                     val mods = buildList {
-                        addAll(removed.map { "χωρίς " + it.replaceFirstChar(Char::lowercaseChar) })
+                        addAll(describeRemovedIngredients(removed, options.ingredients))
                         addAll(extraQty.filterValues { it > 0 }.map { (name, qty) -> "+ $name" + (if (qty > 1) " ×$qty" else "") })
                     }
-                    val details = (listOf(descLine1) + listOf(mods.joinToString(" · "))).filter { it.isNotEmpty() }.joinToString(" · ")
+                    val details = (listOf(descLine1) + mods).filter { it.isNotEmpty() }.joinToString("\n")
                     onAdd(
                         DraftLine(
                             key = "",
                             productId = product.id,
-                            name = product.name,
+                            name = lineName,
                             unitPrice = unitPrice,
                             quantity = quantity,
-                            bread = selectedBread,
+                            bread = if (breadChoice) selectedBread else null,
                             removedIngredients = removed.toList(),
                             extras = extraQty.filterValues { it > 0 }.toMap(),
-                            note = note.trim(),
+                            note = noteTrimmed,
                             details = details,
                         ),
                     )
