@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -52,6 +53,31 @@ private fun composeCustomizedName(productName: String, bread: String): String {
     return breadAbbreviation(bread) + " " + rest
 }
 
+/** Ίδια λογική με το ταμείο (βλ. MenuSeed.SupportsDoublePita στο PittaPos.Core) — μόνο ΤΥΛΙΧΤΑ και
+ * ΚΛΑΣΙΚΑ ΜΙΝΙ έχουν την επιλογή «διπλή πίτα». Δέχεται και το παλιό «ΚΛΑΣΙΚΑ ΜΙΚΡΑ» για καταστήματα
+ * που δεν έχουν ξαναγράψει το menu.json τους μετά τη μετονομασία. Ελέγχει ΚΑΙ ότι ο server έστειλε
+ * χρέωση γι' αυτή την κατηγορία (doublePitaPrices) — αλλιώς δεν έχει ρυθμιστεί ακόμα από τη Διαχείριση
+ * Καταλόγου του ταμείου, οπότε η επιλογή δεν έχει νόημα να φανεί.</summary> */
+private fun supportsDoublePita(category: String, options: CustomizerOptionsDto) =
+    (category == "ΤΥΛΙΧΤΑ" || category == "ΚΛΑΣΙΚΑ ΜΙΝΙ" || category == "ΚΛΑΣΙΚΑ ΜΙΚΡΑ") &&
+        options.doublePitaPrices.orEmpty().containsKey(category)
+
+/** Ίδια λογική με MenuSeed.ComposeDoublePitaName στο ταμείο — ΤΥΛΙΧΤΑ βάζει ψωμί+«ΔΙΠΛΗ ΠΙΤΑ» μπροστά
+ * από το όνομα (χωρίς το «Πίττα »), ΚΛΑΣΙΚΑ ΜΙΝΙ/ΜΙΚΡΑ αντικαθιστά το «Μίνι»/«Μικρό» ώστε να μη
+ * διπλασιάζεται η λέξη. */
+private fun composeDoublePitaName(productName: String, category: String, bread: String): String {
+    if (category == "ΤΥΛΙΧΤΑ") {
+        val prefix = "Πίττα "
+        val rest = if (productName.startsWith(prefix, ignoreCase = true)) productName.substring(prefix.length) else productName
+        return breadAbbreviation(bread) + " ΔΙΠΛΗ ΠΙΤΑ " + rest
+    }
+    val miniPrefixes = listOf("Μίνι ", "Μικρό ")
+    val rest = miniPrefixes.firstNotNullOfOrNull { prefix ->
+        if (productName.startsWith(prefix, ignoreCase = true)) productName.substring(prefix.length) else null
+    } ?: productName
+    return "ΜΙΝΙ ΔΙΠΛΗ ΠΙΤΑ " + rest
+}
+
 /** Ίδιο κατώφλι με το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients) — 3+ αφαιρέσεις γίνονται
  * «μόνο με:» + ένα υλικό ανά γραμμή αντί για μακριά λίστα «χωρίς Χ · χωρίς Υ». */
 private fun describeRemovedIngredients(removed: List<String>, allIngredients: List<String>): List<String> {
@@ -76,6 +102,7 @@ private data class DraftLine(
     val extras: Map<String, Int>? = null,
     val note: String? = null,
     val details: String = "",
+    val doublePita: Boolean = false,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -264,7 +291,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                                 scope.launch {
                                     sending = true
                                     val lines = cartLines.map { l ->
-                                        OrderLineRequest(l.productId, l.quantity, l.bread, l.removedIngredients, l.extras, l.note)
+                                        OrderLineRequest(l.productId, l.quantity, l.bread, l.removedIngredients, l.extras, l.note, l.doublePita)
                                     }
                                     try {
                                         val response = ApiClient.create(prefs.serverUrl).submitOrder(
@@ -483,17 +510,22 @@ private fun CustomizerSheet(
     val noteKeyboardController = LocalSoftwareKeyboardController.current
     val breadChoice = hasBreadChoice(category)
     val fuseBread = fuseBreadIntoName(category)
+    val showDoublePita = supportsDoublePita(category, options)
+    val doublePitaPrice = options.doublePitaPrices.orEmpty()[category] ?: 0.0
     var quantity by remember { mutableStateOf(initial?.quantity ?: 1) }
     var selectedBread by remember { mutableStateOf(initial?.bread ?: options.breads.firstOrNull() ?: "") }
     val removed = remember { mutableStateListOf<String>().apply { initial?.removedIngredients?.let(::addAll) } }
     val extraQty = remember { mutableStateMapOf<String, Int>().apply { initial?.extras?.let(::putAll) } }
     var note by remember { mutableStateOf(initial?.note ?: "") }
+    var isDoublePita by remember { mutableStateOf(initial?.doublePita ?: false) }
+    // Ίδια λογική με CustomizerViewModel.IsSketo στο ταμείο — «σκέτο» σημαίνει όλα τα υλικά αφαιρεμένα.
+    val isSketo = options.ingredients.isNotEmpty() && removed.size == options.ingredients.size
     // Το bottom sheet κλείνει με animation — ένα γρήγορο διπλό tap στο ΠΡΟΣΘΗΚΗ προλαβαίνει να πατηθεί
     // δύο φορές πριν προλάβει να κλείσει, προσθέτοντας το ίδιο είδος διπλό στο καλάθι.
     var submitted by remember { mutableStateOf(false) }
 
     val extrasCost = options.extras.sumOf { (extraQty[it.name] ?: 0) * it.price }
-    val unitPrice = product.price + extrasCost
+    val unitPrice = product.price + extrasCost + (if (showDoublePita && isDoublePita) doublePitaPrice else 0.0)
     val lineTotal = unitPrice * quantity
 
     // Κοινή λογική "πρόσθεσε στο καλάθι" — καλείται είτε από το κουμπί πάνω δεξιά (γρήγορη αλλαγή, π.χ.
@@ -503,10 +535,17 @@ private fun CustomizerSheet(
         submitted = true
         // Ίδια λογική κατηγορίας με το ταμείο (βλ. CustomizerViewModel.Add στο PittaPos.App):
         // ΤΥΛΙΧΤΑ χωνεύουν το ψωμί στο όνομα, ΜΕΡΙΔΕΣ το δείχνουν σε ξεχωριστή γραμμή ολόγραφο,
-        // άλλες κατηγορίες δεν αναφέρουν καθόλου ψωμί.
+        // άλλες κατηγορίες δεν αναφέρουν καθόλου ψωμί. Η διπλή πίτα προηγείται — αντικαθιστά εντελώς
+        // το κανονικό όνομα, ίδια προτεραιότητα με το ταμείο.
         val noteTrimmed = note.trim()
-        val lineName = if (breadChoice && fuseBread) composeCustomizedName(product.name, selectedBread) else product.name
+        val doublePita = showDoublePita && isDoublePita
+        val lineName = when {
+            doublePita -> composeDoublePitaName(product.name, category, selectedBread)
+            breadChoice && fuseBread -> composeCustomizedName(product.name, selectedBread)
+            else -> product.name
+        }
         val descLine1 = when {
+            doublePita -> noteTrimmed
             !breadChoice -> noteTrimmed
             fuseBread -> noteTrimmed
             noteTrimmed.isNotEmpty() -> selectedBread + "\n" + noteTrimmed
@@ -529,6 +568,7 @@ private fun CustomizerSheet(
                 extras = extraQty.filterValues { it > 0 }.toMap(),
                 note = noteTrimmed,
                 details = details,
+                doublePita = doublePita,
             ),
         )
     }
@@ -551,12 +591,14 @@ private fun CustomizerSheet(
                 // Γρήγορη προσθήκη πάνω δεξιά — για μια απλή αλλαγή (π.χ. μόνο αραβική αντί για ελληνική
                 // πίτα) δεν χρειάζεται σκρολ μέχρι το κουμπί στο τέλος της φόρμας, μετά από όλα τα υλικά/
                 // έξτρα. Χωρίς τιμή πάνω — μόνο εικονίδιο, η τιμή φαίνεται ήδη στο κανονικό κουμπί κάτω.
+                // Τικ αντί για «+» — το «+» μπέρδευε με τα στέπερ ποσότητας/εξτρών δίπλα του, σαν να
+                // αύξανε ποσότητα αντί να καταχωρεί/κλείνει την προσαρμογή.
                 FilledIconButton(
                     enabled = !submitted,
                     shape = MaterialTheme.shapes.medium,
                     onClick = { submit() },
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Γρήγορη προσθήκη")
+                    Icon(Icons.Default.Check, contentDescription = "Καταχώρηση")
                 }
             }
             Spacer(Modifier.height(20.dp))
@@ -572,8 +614,37 @@ private fun CustomizerSheet(
                 Spacer(Modifier.height(16.dp))
             }
 
+            // Διπλή πίτα — μόνο ΤΥΛΙΧΤΑ/ΚΛΑΣΙΚΑ ΜΙΝΙ, ίδια λογική με CustomizerViewModel.ShowDoublePitaOption
+            // στο ταμείο. Δεν χρειάζεται επιλογή ψωμιού (ΚΛΑΣΙΚΑ ΜΙΝΙ δεν έχει καν), γι' αυτό δική της ενότητα.
+            if (showDoublePita) {
+                SelectableRow(selected = isDoublePita, onClick = { isDoublePita = !isDoublePita }) {
+                    Checkbox(checked = isDoublePita, onCheckedChange = { isDoublePita = it })
+                    Text(
+                        if (doublePitaPrice > 0)
+                            String.format(Locale.getDefault(), "ΔΙΠΛΗ ΠΙΤΑ (+€%.2f)", doublePitaPrice)
+                        else "ΔΙΠΛΗ ΠΙΤΑ",
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
             if (options.ingredients.isNotEmpty()) {
-                SectionLabel("Υλικά — ξεμαρκάρισε ό,τι δεν θέλεις")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SectionLabel("Υλικά — ξεμαρκάρισε ό,τι δεν θέλεις")
+                    // Γρήγορο κουμπί «ΣΚΕΤΟ» — ίδια λογική με CustomizerViewModel.ToggleSketo στο ταμείο,
+                    // αφαιρεί/επαναφέρει όλα τα υλικά μαζί αντί να ξεμαρκάρεις ένα-ένα.
+                    TextButton(onClick = {
+                        if (isSketo) removed.clear() else {
+                            removed.clear()
+                            removed.addAll(options.ingredients)
+                        }
+                    }) { Text(if (isSketo) "✓ ΣΚΕΤΟ" else "ΣΚΕΤΟ") }
+                }
                 options.ingredients.forEach { ing ->
                     val included = ing !in removed
                     SelectableRow(

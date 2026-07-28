@@ -41,6 +41,10 @@ data class CustomizerOptionsDto(
     val breads: List<String>,
     val ingredients: List<String>,
     val extras: List<ExtraOptionDto>,
+    // Nullable, όχι emptyMap() default — το Gson γεμίζει τα πεδία με reflection παρακάμπτοντας τον
+    // constructor, οπότε ένα παλιότερο POS που δεν στέλνει ακόμα αυτό το κλειδί στο JSON δίνει null εδώ
+    // ΠΑΡΑ το Kotlin default (δοκιμασμένο: crash στο MenuScreen χωρίς αυτό). Πάντα .orEmpty() στη χρήση.
+    val doublePitaPrices: Map<String, Double>? = null,
 )
 
 data class OrderLineRequest(
@@ -50,6 +54,7 @@ data class OrderLineRequest(
     val removedIngredients: List<String>? = null,
     val extras: Map<String, Int>? = null,
     val note: String? = null,
+    val doublePita: Boolean = false,
 )
 
 data class SubmitOrderRequest(
