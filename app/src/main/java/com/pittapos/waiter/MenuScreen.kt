@@ -760,7 +760,15 @@ private fun CartReviewSheet(
     onEdit: (DraftLine) -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+        // verticalScroll: χωρίς αυτό, σε μεγάλη παραγγελία όσες γραμμές δεν χωρούσαν στο ύψος της
+        // οθόνης ήταν ΑΠΡΟΣΙΤΕΣ — το φύλλο δεν κυλούσε καθόλου και ο σερβιτόρος δεν μπορούσε ούτε να
+        // τις δει ούτε να τις διορθώσει. (Το φύλλο των υλικών παρακάτω το είχε ήδη σωστά.)
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp),
+        ) {
             Text("Το καλάθι σου", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             Spacer(Modifier.height(16.dp))
             if (lines.isEmpty()) {
