@@ -32,6 +32,10 @@ data class MenuProductDto(
     // Άδεια λίστα σημαίνει «προϊόν χωρίς βασικά υλικά» και ΔΕΝ είναι το ίδιο με null (βλ. σχόλιο στο
     // doublePitaPrices: το Gson αγνοεί τα Kotlin defaults, το πεδίο που λείπει έρχεται όντως null).
     val ingredients: List<String>? = null,
+    // Τα ονόματα των έξτρα ΤΟΥ προϊόντος, με τη σειρά που τα έχει το ταμείο. Οι τιμές τους μένουν στο
+    // CustomizerOptionsDto.extras (κοινός κατάλογος) — εδώ ταξιδεύει μόνο ποια και με ποια σειρά.
+    // Nullable: ταμείο που δεν το στέλνει ακόμα → δείχνουμε τον κοινό κατάλογο, όπως πριν.
+    val extras: List<String>? = null,
 )
 
 data class MenuCategoryDto(

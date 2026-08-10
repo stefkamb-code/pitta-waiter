@@ -655,6 +655,12 @@ private fun CustomizerSheet(
     // Τα υλικά του προϊόντος — ίδια πηγή με το ταμείο (MenuStore.IngredientsFor). Ο κοινός κατάλογος
     // μένει μόνο ως εφεδρεία για ταμείο που δεν στέλνει ακόμα το πεδίο (βλ. MenuProductDto.ingredients).
     val ingredients = product.ingredients ?: options.ingredients
+    // Τα έξτρα του προϊόντος, με τη σειρά του ταμείου. Οι τιμές έρχονται από τον κοινό κατάλογο, γι'
+    // αυτό γίνεται αντιστοίχιση με το όνομα· ό,τι δεν βρεθεί αγνοείται (θα ήταν έξτρα χωρίς τιμή).
+    val extras = remember(product.id, product.extras, options.extras) {
+        product.extras?.mapNotNull { name -> options.extras.firstOrNull { it.name == name } }
+            ?: options.extras
+    }
     // Ίδια λογική με CustomizerViewModel.IsSketo στο ταμείο — «σκέτο» σημαίνει όλα τα υλικά αφαιρεμένα.
     val isSketo = ingredients.isNotEmpty() && removed.size == ingredients.size
     // Το bottom sheet κλείνει με animation — ένα γρήγορο διπλό tap στο ΠΡΟΣΘΗΚΗ προλαβαίνει να πατηθεί
@@ -665,7 +671,7 @@ private fun CustomizerSheet(
     // «+» σε ένα μόνο έξτρα ακύρωνε ολόκληρη τη φόρμα και ξαναχτίζονταν υλικά, ψωμί και τα ~21 έξτρα.
     // Έτσι η ανάγνωση μένει εκεί που όντως χρησιμοποιείται η τιμή (το κουμπί ΠΡΟΣΘΗΚΗ).
     val extrasCost by remember {
-        derivedStateOf { options.extras.sumOf { (extraQty[it.name] ?: 0) * it.price } }
+        derivedStateOf { extras.sumOf { (extraQty[it.name] ?: 0) * it.price } }
     }
     val unitPrice by remember {
         derivedStateOf { product.price + extrasCost + (if (showDoublePita && isDoublePita) doublePitaPrice else 0.0) }
@@ -821,13 +827,13 @@ private fun CustomizerSheet(
                 item { Spacer(Modifier.height(16.dp)) }
             }
 
-            if (options.extras.isNotEmpty()) {
+            if (extras.isNotEmpty()) {
                 item { SectionLabel("Έξτρα") }
                 // Δύο ανά σειρά: τα έξτρα είναι κοντά στα 20 και σε μία στήλη ο σερβιτόρος σκρόλαρε
                 // ατέλειωτα για να φτάσει στα τελευταία. Το στέπερ μπαίνει ΚΑΤΩ από το όνομα, όχι δίπλα:
                 // στο μισό πλάτος δεν χωρούν και τα δύο, και το να μικρύνει το στέπερ θα έκανε τα κουμπιά
                 // μικρότερα από το όριο αφής — λάθος πάτημα σε ώρα αιχμής κοστίζει πιο πολύ από το σκρολ.
-                items(options.extras.chunked(2)) { pair ->
+                items(extras.chunked(2)) { pair ->
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                         pair.forEach { extra ->
                             val qty = extraQty[extra.name] ?: 0
