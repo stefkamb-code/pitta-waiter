@@ -451,14 +451,27 @@ private fun CategoryCard(category: MenuCategoryDto, cartCount: Int, onClick: () 
  * (34dp κουμπιά αντί 48dp): το ζητούμενο ήταν να μη χρειάζεται ατέλειωτο σκρολ για ~20 έξτρα. */
 @Composable
 private fun RowScope.ExtraCell(extra: ExtraOptionDto, quantity: Int, onInc: () -> Unit, onDec: () -> Unit) {
+    // Επιλεγμένο έξτρα βάφεται, ίδιο σημάδι με το τσεκαρισμένο υλικό (SelectableRow): με ~21 έξτρα σε δύο
+    // στήλες, το σκέτο «1» μέσα στο στέπερ χανόταν και ο σερβιτόρος δεν έβλεπε με μια ματιά τι έβαλε.
+    val picked = quantity > 0
     Row(
-        modifier = Modifier.weight(1f).padding(vertical = 4.dp, horizontal = 2.dp),
+        modifier = Modifier
+            .weight(1f)
+            .padding(horizontal = 2.dp, vertical = 2.dp)
+            .clip(MaterialTheme.shapes.small)
+            .background(
+                if (picked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                else androidx.compose.ui.graphics.Color.Transparent,
+            )
+            .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 extra.name,
-                fontWeight = FontWeight.Medium,
+                fontWeight = if (picked) FontWeight.Bold else FontWeight.Medium,
+                color = if (picked) MaterialTheme.colorScheme.primary
+                else androidx.compose.ui.graphics.Color.Unspecified,
                 fontSize = 13.sp,
                 lineHeight = 15.sp,
                 maxLines = 2,
@@ -648,9 +661,16 @@ private fun CustomizerSheet(
     // δύο φορές πριν προλάβει να κλείσει, προσθέτοντας το ίδιο είδος διπλό στο καλάθι.
     var submitted by remember { mutableStateOf(false) }
 
-    val extrasCost = options.extras.sumOf { (extraQty[it.name] ?: 0) * it.price }
-    val unitPrice = product.price + extrasCost + (if (showDoublePita && isDoublePita) doublePitaPrice else 0.0)
-    val lineTotal = unitPrice * quantity
+    // derivedStateOf, όχι σκέτος υπολογισμός: το άθροισμα διαβάζει ΟΛΟΝ τον χάρτη των έξτρα, οπότε ένα
+    // «+» σε ένα μόνο έξτρα ακύρωνε ολόκληρη τη φόρμα και ξαναχτίζονταν υλικά, ψωμί και τα ~21 έξτρα.
+    // Έτσι η ανάγνωση μένει εκεί που όντως χρησιμοποιείται η τιμή (το κουμπί ΠΡΟΣΘΗΚΗ).
+    val extrasCost by remember {
+        derivedStateOf { options.extras.sumOf { (extraQty[it.name] ?: 0) * it.price } }
+    }
+    val unitPrice by remember {
+        derivedStateOf { product.price + extrasCost + (if (showDoublePita && isDoublePita) doublePitaPrice else 0.0) }
+    }
+    val lineTotal by remember { derivedStateOf { unitPrice * quantity } }
 
     // Κοινή λογική "πρόσθεσε στο καλάθι" — καλείται είτε από το κουμπί πάνω δεξιά (γρήγορη αλλαγή, π.χ.
     // μόνο το ψωμί, χωρίς να χρειάζεται σκρολ μέχρι κάτω) είτε από το κανονικό κουμπί στο τέλος της φόρμας.
@@ -698,12 +718,15 @@ private fun CustomizerSheet(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 20.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 24.dp),
+        // LazyColumn, όχι Column με verticalScroll: με το scroll χτίζονταν ΟΛΕΣ οι σειρές πριν προλάβει
+        // να ανοίξει το φύλλο — ψωμί, ~7 υλικά, ~21 έξτρα, σημείωση, ποσότητα, κουμπί. Σε φθηνό κινητό
+        // (Xiaomi Redmi 4GB) αυτό φαινόταν σαν κόλλημα κάθε φορά που άνοιγες τα έξτρα. Έτσι χτίζονται
+        // μόνο όσες σειρές φαίνονται, και οι υπόλοιπες καθώς κυλάς.
+        LazyColumn(
+            modifier = Modifier.padding(horizontal = 20.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
         ) {
+            item {
             Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(product.name, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
@@ -726,22 +749,24 @@ private fun CustomizerSheet(
                 }
             }
             Spacer(Modifier.height(20.dp))
+            }
 
             if (breadChoice && options.breads.isNotEmpty()) {
                 // Χωρίς τίτλο «Ψωμί»: οι ίδιες οι επιλογές (Ελληνική/Αραβική/Ψωμί) λένε ήδη τι είναι,
                 // ενώ η ετικέτα έπιανε μια ολόκληρη σειρά ψηλά στη φόρμα χωρίς να πατιέται.
-                options.breads.forEach { bread ->
+                items(options.breads) { bread ->
                     SelectableRow(selected = selectedBread == bread, onClick = { selectedBread = bread }) {
                         RadioButton(selected = selectedBread == bread, onClick = { selectedBread = bread })
                         Text(bread)
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                item { Spacer(Modifier.height(16.dp)) }
             }
 
             // Διπλή πίτα — μόνο ΤΥΛΙΧΤΑ/ΚΛΑΣΙΚΑ ΜΙΝΙ, ίδια λογική με CustomizerViewModel.ShowDoublePitaOption
             // στο ταμείο. Δεν χρειάζεται επιλογή ψωμιού (ΚΛΑΣΙΚΑ ΜΙΝΙ δεν έχει καν), γι' αυτό δική της ενότητα.
             if (showDoublePita) {
+                item {
                 SelectableRow(selected = isDoublePita, onClick = { isDoublePita = !isDoublePita }) {
                     Checkbox(checked = isDoublePita, onCheckedChange = { isDoublePita = it })
                     Text(
@@ -752,9 +777,11 @@ private fun CustomizerSheet(
                     )
                 }
                 Spacer(Modifier.height(16.dp))
+                }
             }
 
             if (ingredients.isNotEmpty()) {
+                item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -770,9 +797,10 @@ private fun CustomizerSheet(
                         }
                     }) { Text(if (isSketo) "✓ ΣΚΕΤΟ" else "ΣΚΕΤΟ") }
                 }
+                }
                 // Δύο ανά σειρά, όπως και τα έξτρα — τα ονόματα υλικών είναι κοντά και σε μία στήλη
                 // έμενε μισή οθόνη κενή δεξιά, σπρώχνοντας τα έξτρα και το ΠΡΟΣΘΗΚΗ πιο κάτω.
-                ingredients.chunked(2).forEach { pair ->
+                items(ingredients.chunked(2)) { pair ->
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         pair.forEach { ing ->
                             val included = ing !in removed
@@ -790,16 +818,16 @@ private fun CustomizerSheet(
                         if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                item { Spacer(Modifier.height(16.dp)) }
             }
 
             if (options.extras.isNotEmpty()) {
-                SectionLabel("Έξτρα")
+                item { SectionLabel("Έξτρα") }
                 // Δύο ανά σειρά: τα έξτρα είναι κοντά στα 20 και σε μία στήλη ο σερβιτόρος σκρόλαρε
                 // ατέλειωτα για να φτάσει στα τελευταία. Το στέπερ μπαίνει ΚΑΤΩ από το όνομα, όχι δίπλα:
                 // στο μισό πλάτος δεν χωρούν και τα δύο, και το να μικρύνει το στέπερ θα έκανε τα κουμπιά
                 // μικρότερα από το όριο αφής — λάθος πάτημα σε ώρα αιχμής κοστίζει πιο πολύ από το σκρολ.
-                options.extras.chunked(2).forEach { pair ->
+                items(options.extras.chunked(2)) { pair ->
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                         pair.forEach { extra ->
                             val qty = extraQty[extra.name] ?: 0
@@ -815,9 +843,10 @@ private fun CustomizerSheet(
                         if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                item { Spacer(Modifier.height(16.dp)) }
             }
 
+            item {
             OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
@@ -849,6 +878,7 @@ private fun CustomizerSheet(
                     (if (initial != null) "ΕΝΗΜΕΡΩΣΗ · " else "ΠΡΟΣΘΗΚΗ · ") + String.format(Locale.getDefault(), "€%.2f", lineTotal),
                     fontWeight = FontWeight.Bold,
                 )
+            }
             }
         }
     }
