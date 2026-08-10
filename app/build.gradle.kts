@@ -15,9 +15,26 @@ android {
         versionName = "1.9"
     }
 
+    // Η release υπογράφεται με ΤΟ ΙΔΙΟ κλειδί που έβγαζε μέχρι τώρα η debug (το debug.keystore του
+    // μηχανήματος). Χωρίς αυτό το APK θα είχε άλλη υπογραφή και τα κινητά θα ζητούσαν απεγκατάσταση
+    // της παλιάς εφαρμογής — δηλαδή χαμένες ρυθμίσεις (IP, PIN) σε κάθε σερβιτόρο.
+    signingConfigs {
+        create("sideload") {
+            storeFile = File(System.getProperty("user.home"), ".android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
+            // Το APK που πάει στα κινητά χτίζεται πλέον σε release. Η debug έκδοση τρέχει με
+            // debuggable=true, που κρατάει το ART σε πιο αργή λειτουργία — στα φθηνά κινητά φαινόταν
+            // καθαρά όταν άνοιγαν τα έξτρα. Το minify μένει κλειστό: το Gson διαβάζει τα DTO με
+            // reflection και ένα R8 χωρίς keep rules θα έσπαγε σιωπηλά το μενού.
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("sideload")
         }
     }
 
