@@ -53,6 +53,13 @@ fun SplashScreen(onFinished: () -> Unit) {
                 fontSize = 22.sp,
                 letterSpacing = 6.sp,
             )
+            Spacer(modifier = Modifier.height(10.dp))
+            // Η έκδοση φαίνεται σε κάθε άνοιγμα — έτσι ξεχωρίζει αμέσως ποιο κινητό πήρε το νέο APK.
+            Text(
+                "έκδοση " + rememberAppVersionName(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+            )
         }
     }
 }

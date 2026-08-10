@@ -222,6 +222,14 @@ private fun SettingsDialog(prefs: AppPrefs, onDismiss: () -> Unit, onSaved: () -
                     singleLine = true,
                     shape = MaterialTheme.shapes.small,
                 )
+                Spacer(Modifier.height(16.dp))
+                // Ίδιος αριθμός με την αρχική οθόνη — εδώ βρίσκεται χωρίς να χρειαστεί επανεκκίνηση,
+                // όταν ψάχνουμε ποιο κινητό έμεινε σε παλιό APK.
+                Text(
+                    "Έκδοση εφαρμογής " + rememberAppVersionName(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {

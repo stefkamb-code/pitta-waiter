@@ -2,10 +2,8 @@ package com.pittapos.waiter
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -149,8 +147,9 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     var selectedCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
     var customizingProduct by remember { mutableStateOf<MenuProductDto?>(null) }
     var customizingCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
-    // Ποιο προϊόν έχει πατηθεί μία φορά. Δεν κάνει τίποτα από μόνο του — δίνει μόνο οπτική επιβεβαίωση
-    // ότι το πάτημα έπιασε, αφού πλέον χρειάζεται δεύτερο πάτημα για να μπει το προϊόν.
+    // Ποιο προϊόν έχει πατηθεί μία φορά. Το πρώτο πάτημα δεν προσθέτει — δίνει οπτική επιβεβαίωση ότι
+    // έπιασε· το δεύτερο πάτημα στο ΙΔΙΟ προϊόν το προσθέτει και ξεδιαλέγει (βλ. ProductCard και onInc
+    // παρακάτω). Πουθενά δεν μετράει ο χρόνος ανάμεσα στα δύο πατήματα.
     var selectedProductId by remember { mutableStateOf<String?>(null) }
     val cartLines = remember { mutableStateListOf<DraftLine>() }
     var lineCounter by remember { mutableStateOf(0) }
@@ -394,7 +393,14 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                             selected = selectedProductId == product.id,
                             onSelect = { selectedProductId = product.id },
                             onOpenCustomizer = { customizingProduct = product; customizingCategory = category },
-                            onInc = { changeSimpleQuantity(product, category, 1) },
+                            onInc = {
+                                changeSimpleQuantity(product, category, 1)
+                                // Μόλις μπει, ξεδιαλέγεται: ο κανόνας μένει ένας για ΟΛΑ τα τεμάχια —
+                                // δύο πατήματα = ένα τεμάχιο, και για το πρώτο και για το πέμπτο. Η κάρτα
+                                // μένει χρωματισμένη με τον μετρητή, που σημαίνει «μπήκε» — άλλο πράγμα
+                                // από το «είναι διαλεγμένο» (βλ. ProductCard).
+                                selectedProductId = null
+                            },
                         )
                     }
                 }
@@ -565,8 +571,23 @@ private fun CustomizeBoxButton(onClick: () -> Unit) {
     }
 }
 
-/** ΔΙΠΛΟ κλικ πάνω στο προϊόν προσθέτει (1, 2, 3...) — το «✎» δεξιά ανοίγει πάντα την προσαρμογή/έξτρα. */
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * ΔΥΟ πατήματα προσθέτουν ΕΝΑ τεμάχιο — αλλά ΧΩΡΙΣ χρονόμετρο: το πρώτο πάτημα επιλέγει το προϊόν
+ * (χοντραίνει το περίγραμμα), το δεύτερο το προσθέτει και το ξεδιαλέγει. Ίδιος κανόνας για κάθε
+ * τεμάχιο, οπότε δύο σωσάκια = δύο φορές το ίδιο ζευγάρι πατημάτων. Η κάρτα μένει χρωματισμένη με τον
+ * μετρητή όσο το προϊόν είναι στο καλάθι — αυτό σημαίνει «μπήκε», όχι «είναι διαλεγμένο», και είναι
+ * δύο διαφορετικά σημάδια επίτηδες. Το «✎» δεξιά ανοίγει πάντα την προσαρμογή/έξτρα.
+ *
+ * ΓΙΑΤΙ ΟΧΙ combinedClickable/onDoubleClick, που ήταν εδώ πριν: το Android μετράει διπλό πάτημα μόνο
+ * αν το δεύτερο δάχτυλο κατέβει μέσα σε 300 ms. Εν ώρα αιχμής, με το κινητό στο ένα χέρι, το δεύτερο
+ * πάτημα αργούσε και το σύστημα μετρούσε δύο ΜΟΝΑ πατήματα — που δεν πρόσθεταν τίποτα. Ο σερβιτόρος
+ * το έβλεπε σαν «δεν πιάνει, πρέπει να πατήσω πολλές φορές», ιδίως στα προϊόντα χωρίς έξτρα (σωσάκια,
+ * αναψυκτικά) όπου δεν υπάρχει καν το «✎» για να προστεθούν με άλλον τρόπο.
+ *
+ * Έτσι το γρήγορο διπλό πάτημα εξακολουθεί να δουλεύει ακριβώς όπως πριν (πρώτο διαλέγει, δεύτερο
+ * προσθέτει) — απλώς δουλεύει και όταν αργεί. Και το κόκκινο εμφανίζεται ΑΜΕΣΩΣ, ενώ με το
+ * onDoubleClick καθυστερούσε 300 ms όσο το σύστημα περίμενε μήπως έρθει δεύτερο πάτημα.
+ */
 @Composable
 private fun ProductCard(
     product: MenuProductDto,
@@ -595,13 +616,13 @@ private fun ProductCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
-                // Διπλό πάτημα βάζει το προϊόν σκέτο· ένα σκέτο άγγιγμα στη σειρά δεν κάνει τίποτα.
+                // Πρώτο πάτημα: διαλέγει. Δεύτερο: βάζει το προϊόν σκέτο και ξαναρχίζει το ζευγάρι.
                 // Τα έξτρα ανοίγουν ΜΟΝΟ από το ✎ δίπλα — η λίστα σκρολάρεται με το δάχτυλο πάνω στα
                 // ίδια τα προϊόντα, οπότε ένα άστοχο tap δεν πρέπει ούτε να προσθέτει είδος ούτε να
                 // πετάγεται μπροστά η φόρμα υλικών εν ώρα αιχμής.
                 modifier = Modifier
                     .weight(1f)
-                    .combinedClickable(onClick = onSelect, onDoubleClick = onInc),
+                    .clickable { if (selected) onInc() else onSelect() },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
