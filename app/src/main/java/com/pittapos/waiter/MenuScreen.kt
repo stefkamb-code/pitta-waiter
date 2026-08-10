@@ -2,8 +2,10 @@ package com.pittapos.waiter
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -147,6 +149,9 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     var selectedCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
     var customizingProduct by remember { mutableStateOf<MenuProductDto?>(null) }
     var customizingCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
+    // Ποιο προϊόν έχει πατηθεί μία φορά. Δεν κάνει τίποτα από μόνο του — δίνει μόνο οπτική επιβεβαίωση
+    // ότι το πάτημα έπιασε, αφού πλέον χρειάζεται δεύτερο πάτημα για να μπει το προϊόν.
+    var selectedProductId by remember { mutableStateOf<String?>(null) }
     val cartLines = remember { mutableStateListOf<DraftLine>() }
     var lineCounter by remember { mutableStateOf(0) }
     val snackbarHost = remember { SnackbarHostState() }
@@ -386,6 +391,8 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                         ProductCard(
                             product = product,
                             quantity = simpleQuantity(product),
+                            selected = selectedProductId == product.id,
+                            onSelect = { selectedProductId = product.id },
                             onOpenCustomizer = { customizingProduct = product; customizingCategory = category },
                             onInc = { changeSimpleQuantity(product, category, 1) },
                         )
@@ -545,11 +552,14 @@ private fun CustomizeBoxButton(onClick: () -> Unit) {
     }
 }
 
-/** Κλικ πάνω στο προϊόν προσθέτει (1, 2, 3...) — το «+» δεξιά ανοίγει πάντα την προσαρμογή/έξτρα. */
+/** ΔΙΠΛΟ κλικ πάνω στο προϊόν προσθέτει (1, 2, 3...) — το «✎» δεξιά ανοίγει πάντα την προσαρμογή/έξτρα. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProductCard(
     product: MenuProductDto,
     quantity: Int,
+    selected: Boolean,
+    onSelect: () -> Unit,
     onOpenCustomizer: () -> Unit,
     onInc: () -> Unit,
 ) {
@@ -560,14 +570,25 @@ private fun ProductCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         color = if (inCart) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, if (inCart) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+        // Πιο χοντρό περίγραμμα στο επιλεγμένο, ώστε να ξεχωρίζει από το «είναι στο καλάθι» (που
+        // βάφει ολόκληρη την κάρτα) — δύο διαφορετικά πράγματα, δύο διαφορετικά σημάδια.
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected || inCart) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp, 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
-                modifier = Modifier.weight(1f).clickable(onClick = onInc),
+                // Διπλό πάτημα βάζει το προϊόν σκέτο· ένα σκέτο άγγιγμα στη σειρά δεν κάνει τίποτα.
+                // Τα έξτρα ανοίγουν ΜΟΝΟ από το ✎ δίπλα — η λίστα σκρολάρεται με το δάχτυλο πάνω στα
+                // ίδια τα προϊόντα, οπότε ένα άστοχο tap δεν πρέπει ούτε να προσθέτει είδος ούτε να
+                // πετάγεται μπροστά η φόρμα υλικών εν ώρα αιχμής.
+                modifier = Modifier
+                    .weight(1f)
+                    .combinedClickable(onClick = onSelect, onDoubleClick = onInc),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -707,7 +728,8 @@ private fun CustomizerSheet(
             Spacer(Modifier.height(20.dp))
 
             if (breadChoice && options.breads.isNotEmpty()) {
-                SectionLabel("Ψωμί")
+                // Χωρίς τίτλο «Ψωμί»: οι ίδιες οι επιλογές (Ελληνική/Αραβική/Ψωμί) λένε ήδη τι είναι,
+                // ενώ η ετικέτα έπιανε μια ολόκληρη σειρά ψηλά στη φόρμα χωρίς να πατιέται.
                 options.breads.forEach { bread ->
                     SelectableRow(selected = selectedBread == bread, onClick = { selectedBread = bread }) {
                         RadioButton(selected = selectedBread == bread, onClick = { selectedBread = bread })
