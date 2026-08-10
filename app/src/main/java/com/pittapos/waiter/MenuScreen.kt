@@ -26,50 +26,78 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-/** Ίδια λογική κατηγορίας με το ταμείο (βλ. MenuSeed.HasBreadChoice στο PittaPos.Core) — μόνο τα ΤΥΛΙΧΤΑ
- * και οι ΜΕΡΙΔΕΣ/ΜΕΡΙΔΕΣ ΠΑΠΠΟΥ έχουν καθόλου επιλογή ψωμιού, ώστε το κινητό να δείχνει το ίδιο με το ταμείο. */
-private fun hasBreadChoice(category: String) =
-    category == "ΤΥΛΙΧΤΑ" || category == "ΜΕΡΙΔΕΣ" || category == "ΜΕΡΙΔΕΣ ΠΑΠΠΟΥ"
+// ── Κανόνες κατηγορίας ────────────────────────────────────────────────────────────────────────────
+// Πηγή είναι ΤΟ ΤΑΜΕΙΟ: κάθε κατηγορία κουβαλάει τους κανόνες της στο /api/menu, οπότε ό,τι αλλάζει ο
+// ταμίας από τη Διαχείριση Καταλόγου (μετονομασία κατηγορίας, ψωμί, διπλή πίτα, υλικά, τιμές) περνάει
+// αυτόματα στο κινητό χωρίς νέο APK. Οι legacy* από κάτω μένουν ΜΟΝΟ ως εφεδρεία για ταμείο παλιότερο
+// από αυτή την έκδοση — μη γράψεις νέο όνομα κατηγορίας εκεί, θα ξανασπάσει στην επόμενη μετονομασία.
 
-/** Μόνο τα ΤΥΛΙΧΤΑ χωνεύουν το ψωμί μέσα στο όνομα («ΑΡ. Κοτόπουλο») — οι ΜΕΡΙΔΕΣ το δείχνουν σε
- * ξεχωριστή γραμμή ολόγραφο (βλ. CustomizerSheet), δεν βγάζει νόημα «ΑΡ. Μερίδα κοτόπουλο». */
-private fun fuseBreadIntoName(category: String) = category == "ΤΥΛΙΧΤΑ"
+private fun MenuCategoryDto.breadChoice() = hasBread ?: legacyHasBreadChoice(name)
 
-private fun breadAbbreviation(bread: String) = when (bread) {
-    "Ελληνική" -> "ΕΛ."
-    "Αραβική" -> "ΑΡ."
-    "Ψωμί" -> "Ψ."
-    else -> if (bread.isNotEmpty()) bread.take(1).uppercase() + "." else ""
+private fun MenuCategoryDto.fusesBreadIntoName() = fuseBreadIntoName ?: legacyFuseBreadIntoName(name)
+
+/** Η κατηγορία δείχνει «διπλή πίτα» μόνο αν το ταμείο τη δίνει ΚΑΙ έχει οριστεί χρέωση — αλλιώς δεν
+ * έχει ρυθμιστεί ακόμα από τη Διαχείριση Καταλόγου και δεν έχει νόημα να φανεί. */
+private fun MenuCategoryDto.doublePita(options: CustomizerOptionsDto): Boolean {
+    val supported = supportsDoublePita ?: legacySupportsDoublePita(name)
+    return supported && doublePitaPriceOr(options) > 0.0
 }
 
-private fun composeCustomizedName(productName: String, bread: String): String {
+private fun MenuCategoryDto.doublePitaPriceOr(options: CustomizerOptionsDto) =
+    doublePitaPrice ?: options.doublePitaPrices.orEmpty()[name] ?: 0.0
+
+/** Εφεδρεία για ταμείο πριν το /api/menu στείλει κανόνες κατηγορίας — τα ονόματα είναι του MenuSeed. */
+private fun legacyHasBreadChoice(category: String) =
+    category == "ΤΥΛΙΧΤΑ" || category == "ΠΙΤΤΕΣ" || category == "ΠΙΤΤΕΣ ΠΑΠΠΟΥ" ||
+        category == "ΜΕΡΙΔΕΣ" || category == "ΜΕΡΙΔΕΣ ΠΑΠΠΟΥ"
+
+/** Τα ΤΥΛΙΧΤΑ/ΠΙΤΤΕΣ χωνεύουν το ψωμί μέσα στο όνομα («ΑΡ. Κοτόπουλο») — οι ΜΕΡΙΔΕΣ το δείχνουν σε
+ * ξεχωριστή γραμμή ολόγραφο, δεν βγάζει νόημα «ΑΡ. Μερίδα κοτόπουλο». */
+private fun legacyFuseBreadIntoName(category: String) =
+    category == "ΤΥΛΙΧΤΑ" || category == "ΠΙΤΤΕΣ" || category == "ΠΙΤΤΕΣ ΠΑΠΠΟΥ"
+
+private fun legacySupportsDoublePita(category: String) =
+    category == "ΤΥΛΙΧΤΑ" || category == "ΠΙΤΤΕΣ" || category == "ΚΛΑΣΙΚΑ ΜΙΝΙ" || category == "ΚΛΑΣΙΚΑ ΜΙΚΡΑ"
+
+/** Η συντομογραφία έρχεται από το ταμείο· το when από κάτω είναι μόνο εφεδρεία για ταμείο που δεν τη
+ * στέλνει ακόμα, με το ίδιο τελευταίο σκαλί (αρχικό γράμμα + τελεία) που έχει και το MenuSeed. */
+private fun breadAbbreviation(bread: String, options: CustomizerOptionsDto): String {
+    options.breadAbbreviations.orEmpty()[bread]?.let { return it }
+    return when (bread) {
+        "Ελληνική" -> "ΕΛ."
+        "Αραβική" -> "ΑΡ."
+        "Ψωμί" -> "Ψ."
+        else -> if (bread.isNotEmpty()) bread.take(1).uppercase() + "." else ""
+    }
+}
+
+private fun composeCustomizedName(productName: String, bread: String, options: CustomizerOptionsDto): String {
     val prefix = "Πίττα "
     val rest = if (productName.startsWith(prefix, ignoreCase = true)) productName.substring(prefix.length) else productName
-    return breadAbbreviation(bread) + " " + rest
+    return breadAbbreviation(bread, options) + " " + rest
 }
 
-/** Ίδια λογική με το ταμείο (βλ. MenuSeed.SupportsDoublePita στο PittaPos.Core) — μόνο ΤΥΛΙΧΤΑ και
- * ΚΛΑΣΙΚΑ ΜΙΝΙ έχουν την επιλογή «διπλή πίτα». Δέχεται και το παλιό «ΚΛΑΣΙΚΑ ΜΙΚΡΑ» για καταστήματα
- * που δεν έχουν ξαναγράψει το menu.json τους μετά τη μετονομασία. Ελέγχει ΚΑΙ ότι ο server έστειλε
- * χρέωση γι' αυτή την κατηγορία (doublePitaPrices) — αλλιώς δεν έχει ρυθμιστεί ακόμα από τη Διαχείριση
- * Καταλόγου του ταμείου, οπότε η επιλογή δεν έχει νόημα να φανεί.</summary> */
-private fun supportsDoublePita(category: String, options: CustomizerOptionsDto) =
-    (category == "ΤΥΛΙΧΤΑ" || category == "ΚΛΑΣΙΚΑ ΜΙΝΙ" || category == "ΚΛΑΣΙΚΑ ΜΙΚΡΑ") &&
-        options.doublePitaPrices.orEmpty().containsKey(category)
-
-/** Ίδια λογική με MenuSeed.ComposeDoublePitaName στο ταμείο — ΤΥΛΙΧΤΑ βάζει ψωμί+«ΔΙΠΛΗ ΠΙΤΑ» μπροστά
- * από το όνομα (χωρίς το «Πίττα »), ΚΛΑΣΙΚΑ ΜΙΝΙ/ΜΙΚΡΑ αντικαθιστά το «Μίνι»/«Μικρό» ώστε να μη
- * διπλασιάζεται η λέξη. */
-private fun composeDoublePitaName(productName: String, category: String, bread: String): String {
-    if (category == "ΤΥΛΙΧΤΑ") {
+/** Ίδια λογική με MenuSeed.ComposeDoublePitaName στο ταμείο — οι κατηγορίες που χωνεύουν το ψωμί στο
+ * όνομα βάζουν ψωμί+«ΔΙΠΛΗ ΠΙΤΑ» μπροστά (χωρίς το «Πίττα »), οι υπόλοιπες αντικαθιστούν το
+ * «Μίνι»/«Μικρό» ώστε να μη διπλασιάζεται η λέξη. Κρίνεται από τον κανόνα της κατηγορίας, όχι από το
+ * όνομά της — στο ταμείο είναι το ίδιο σύνολο κατηγοριών με το FuseBreadIntoName.
+ * Το τελικό όνομα το ξαναφτιάχνει ούτως ή άλλως το ταμείο κατά την καταχώρηση· εδώ είναι για το καλάθι. */
+private fun composeDoublePitaName(
+    productName: String,
+    category: MenuCategoryDto,
+    bread: String,
+    options: CustomizerOptionsDto,
+): String {
+    if (category.fusesBreadIntoName()) {
         val prefix = "Πίττα "
         val rest = if (productName.startsWith(prefix, ignoreCase = true)) productName.substring(prefix.length) else productName
-        return breadAbbreviation(bread) + " ΔΙΠΛΗ ΠΙΤΑ " + rest
+        return breadAbbreviation(bread, options) + " ΔΙΠΛΗ ΠΙΤΑ " + rest
     }
     val miniPrefixes = listOf("Μίνι ", "Μικρό ")
     val rest = miniPrefixes.firstNotNullOfOrNull { prefix ->
@@ -82,7 +110,9 @@ private fun composeDoublePitaName(productName: String, category: String, bread: 
  * «μόνο με:» + ένα υλικό ανά γραμμή αντί για μακριά λίστα «χωρίς Χ · χωρίς Υ». */
 private fun describeRemovedIngredients(removed: List<String>, allIngredients: List<String>): List<String> {
     if (removed.isEmpty()) return emptyList()
-    if (removed.size >= allIngredients.size) return listOf("σκέτο")
+    // Το isNotEmpty() είναι ο ίδιος φύλακας με το ταμείο: προϊόν χωρίς βασικά υλικά δεν γίνεται «σκέτο»
+    // από ξεμαρκαρίσματα που κουβαλήθηκαν από αλλού — αλλιώς οι δύο πλευρές τύπωναν διαφορετικά.
+    if (allIngredients.isNotEmpty() && removed.size >= allIngredients.size) return listOf("σκέτο")
     if (removed.size >= 3) {
         val remaining = allIngredients.filter { it !in removed }.map { it.replaceFirstChar(Char::lowercaseChar) }
         return listOf("μόνο με:") + remaining
@@ -116,7 +146,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
     var customizingProduct by remember { mutableStateOf<MenuProductDto?>(null) }
-    var customizingCategory by remember { mutableStateOf("") }
+    var customizingCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
     val cartLines = remember { mutableStateListOf<DraftLine>() }
     var lineCounter by remember { mutableStateOf(0) }
     val snackbarHost = remember { SnackbarHostState() }
@@ -150,7 +180,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     fun simpleQuantity(product: MenuProductDto): Int =
         cartLines.firstOrNull { it.key == "p:${product.id}" }?.quantity ?: 0
 
-    fun changeSimpleQuantity(product: MenuProductDto, category: String, delta: Int) {
+    fun changeSimpleQuantity(product: MenuProductDto, category: MenuCategoryDto, delta: Int) {
         val key = "p:${product.id}"
         val idx = cartLines.indexOfFirst { it.key == key }
         if (idx < 0) {
@@ -158,9 +188,13 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                 // Ίδια λογική με το ταμείο (βλ. ProductsViewModel.TapProduct) — ένα γρήγορο tap σε
                 // customizable προϊόν παίρνει το προεπιλεγμένο ψωμί, ώστε το όνομα να δείχνει ήδη ό,τι θα
                 // έβγαινε αν είχε ανοίξει κανείς τον customizer, όχι το γυμνό όνομα προϊόντος.
-                val defaultBread = customizerOptions?.breads?.firstOrNull() ?: ""
-                val name = if (product.customizable && hasBreadChoice(category) && fuseBreadIntoName(category))
-                    composeCustomizedName(product.name, defaultBread) else product.name
+                val opts = customizerOptions
+                val defaultBread = opts?.breads?.firstOrNull() ?: ""
+                // Χωρίς επιλογές customizer δεν ξέρουμε ούτε ψωμί ούτε συντόμευση — μπαίνει το γυμνό
+                // όνομα, όπως και πριν· το ταμείο ξαναφτιάχνει το τελικό όνομα στην καταχώρηση.
+                val name = if (opts != null && product.customizable &&
+                    category.breadChoice() && category.fusesBreadIntoName())
+                    composeCustomizedName(product.name, defaultBread, opts) else product.name
                 cartLines.add(DraftLine(key, product.id, name, product.price, 1))
             }
             return
@@ -186,7 +220,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
         val product = categories.flatMap { it.products }.firstOrNull { it.id == line.productId } ?: return
         editingLine = line
         customizingProduct = product
-        customizingCategory = categories.firstOrNull { cat -> cat.products.any { it.id == line.productId } }?.name ?: ""
+        customizingCategory = categories.firstOrNull { cat -> cat.products.any { it.id == line.productId } }
     }
 
     if (showCartReview) {
@@ -203,9 +237,12 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
 
     customizingProduct?.let { product ->
         customizerOptions?.let { options ->
+            // Η κατηγορία κουβαλάει τους κανόνες της (ψωμί/διπλή πίτα), οπότε χωρίς αυτήν ο customizer
+            // δεν έχει τι να δείξει — δεν ανοίγει καν αντί να μαντέψει από το όνομα.
+            customizingCategory?.let { category ->
             CustomizerSheet(
                 product = product,
-                category = customizingCategory,
+                category = category,
                 options = options,
                 initial = editingLine,
                 onDismiss = { customizingProduct = null; editingLine = null },
@@ -222,6 +259,7 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                     editingLine = null
                 },
             )
+            }
         }
     }
 
@@ -348,8 +386,8 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                         ProductCard(
                             product = product,
                             quantity = simpleQuantity(product),
-                            onOpenCustomizer = { customizingProduct = product; customizingCategory = category.name },
-                            onInc = { changeSimpleQuantity(product, category.name, 1) },
+                            onOpenCustomizer = { customizingProduct = product; customizingCategory = category },
+                            onInc = { changeSimpleQuantity(product, category, 1) },
                         )
                     }
                 }
@@ -397,6 +435,68 @@ private fun CategoryCard(category: MenuCategoryDto, cartCount: Int, onClick: () 
                 Spacer(Modifier.width(10.dp))
             }
             Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Ένα έξτρα σε μισό πλάτος — όνομα/τιμή αριστερά, στέπερ δεξιά στην ΙΔΙΑ γραμμή, δύο ανά σειρά.
+ * Σε μισό πλάτος δεν χωράει το κανονικό στέπερ δίπλα στο όνομα, γι' αυτό εδώ είναι πιο μαζεμένο
+ * (34dp κουμπιά αντί 48dp): το ζητούμενο ήταν να μη χρειάζεται ατέλειωτο σκρολ για ~20 έξτρα. */
+@Composable
+private fun RowScope.ExtraCell(extra: ExtraOptionDto, quantity: Int, onInc: () -> Unit, onDec: () -> Unit) {
+    Row(
+        modifier = Modifier.weight(1f).padding(vertical = 4.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                extra.name,
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                lineHeight = 15.sp,
+                maxLines = 2,
+            )
+            Text(
+                if (extra.price > 0) String.format(Locale.getDefault(), "+€%.2f", extra.price) else "δωρεάν",
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        CompactQuantityStepper(quantity, onInc = onInc, onDec = onDec)
+    }
+}
+
+/** Μαζεμένη εκδοχή του στέπερ, μόνο για τα έξτρα σε δύο στήλες — ίδια συμπεριφορά, μικρότερα κουμπιά. */
+@Composable
+private fun CompactQuantityStepper(quantity: Int, onInc: () -> Unit, onDec: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        IconButton(onClick = onDec, enabled = quantity > 0, modifier = Modifier.size(34.dp)) {
+            Icon(
+                Icons.Default.Remove,
+                contentDescription = "Μείωση",
+                modifier = Modifier.size(17.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
+        Text(
+            "$quantity",
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        IconButton(onClick = onInc, modifier = Modifier.size(34.dp)) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = "Αύξηση",
+                modifier = Modifier.size(17.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
         }
     }
 }
@@ -500,7 +600,7 @@ private fun ProductCard(
 @Composable
 private fun CustomizerSheet(
     product: MenuProductDto,
-    category: String,
+    category: MenuCategoryDto,
     options: CustomizerOptionsDto,
     initial: DraftLine? = null,
     onDismiss: () -> Unit,
@@ -508,18 +608,21 @@ private fun CustomizerSheet(
 ) {
     val noteFocusManager = LocalFocusManager.current
     val noteKeyboardController = LocalSoftwareKeyboardController.current
-    val breadChoice = hasBreadChoice(category)
-    val fuseBread = fuseBreadIntoName(category)
-    val showDoublePita = supportsDoublePita(category, options)
-    val doublePitaPrice = options.doublePitaPrices.orEmpty()[category] ?: 0.0
+    val breadChoice = category.breadChoice()
+    val fuseBread = category.fusesBreadIntoName()
+    val showDoublePita = category.doublePita(options)
+    val doublePitaPrice = category.doublePitaPriceOr(options)
     var quantity by remember { mutableStateOf(initial?.quantity ?: 1) }
     var selectedBread by remember { mutableStateOf(initial?.bread ?: options.breads.firstOrNull() ?: "") }
     val removed = remember { mutableStateListOf<String>().apply { initial?.removedIngredients?.let(::addAll) } }
     val extraQty = remember { mutableStateMapOf<String, Int>().apply { initial?.extras?.let(::putAll) } }
     var note by remember { mutableStateOf(initial?.note ?: "") }
     var isDoublePita by remember { mutableStateOf(initial?.doublePita ?: false) }
+    // Τα υλικά του προϊόντος — ίδια πηγή με το ταμείο (MenuStore.IngredientsFor). Ο κοινός κατάλογος
+    // μένει μόνο ως εφεδρεία για ταμείο που δεν στέλνει ακόμα το πεδίο (βλ. MenuProductDto.ingredients).
+    val ingredients = product.ingredients ?: options.ingredients
     // Ίδια λογική με CustomizerViewModel.IsSketo στο ταμείο — «σκέτο» σημαίνει όλα τα υλικά αφαιρεμένα.
-    val isSketo = options.ingredients.isNotEmpty() && removed.size == options.ingredients.size
+    val isSketo = ingredients.isNotEmpty() && removed.size == ingredients.size
     // Το bottom sheet κλείνει με animation — ένα γρήγορο διπλό tap στο ΠΡΟΣΘΗΚΗ προλαβαίνει να πατηθεί
     // δύο φορές πριν προλάβει να κλείσει, προσθέτοντας το ίδιο είδος διπλό στο καλάθι.
     var submitted by remember { mutableStateOf(false) }
@@ -540,8 +643,8 @@ private fun CustomizerSheet(
         val noteTrimmed = note.trim()
         val doublePita = showDoublePita && isDoublePita
         val lineName = when {
-            doublePita -> composeDoublePitaName(product.name, category, selectedBread)
-            breadChoice && fuseBread -> composeCustomizedName(product.name, selectedBread)
+            doublePita -> composeDoublePitaName(product.name, category, selectedBread, options)
+            breadChoice && fuseBread -> composeCustomizedName(product.name, selectedBread, options)
             else -> product.name
         }
         val descLine1 = when {
@@ -552,7 +655,7 @@ private fun CustomizerSheet(
             else -> selectedBread
         }
         val mods = buildList {
-            addAll(describeRemovedIngredients(removed, options.ingredients))
+            addAll(describeRemovedIngredients(removed, ingredients))
             addAll(extraQty.filterValues { it > 0 }.map { (name, qty) -> "+ $name" + (if (qty > 1) " ×$qty" else "") })
         }
         val details = (listOf(descLine1) + mods).filter { it.isNotEmpty() }.joinToString("\n")
@@ -629,7 +732,7 @@ private fun CustomizerSheet(
                 Spacer(Modifier.height(16.dp))
             }
 
-            if (options.ingredients.isNotEmpty()) {
+            if (ingredients.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -641,20 +744,28 @@ private fun CustomizerSheet(
                     TextButton(onClick = {
                         if (isSketo) removed.clear() else {
                             removed.clear()
-                            removed.addAll(options.ingredients)
+                            removed.addAll(ingredients)
                         }
                     }) { Text(if (isSketo) "✓ ΣΚΕΤΟ" else "ΣΚΕΤΟ") }
                 }
-                options.ingredients.forEach { ing ->
-                    val included = ing !in removed
-                    SelectableRow(
-                        selected = included,
-                        onClick = { if (included) removed.add(ing) else removed.remove(ing) },
-                    ) {
-                        Checkbox(checked = included, onCheckedChange = {
-                            if (it) removed.remove(ing) else removed.add(ing)
-                        })
-                        Text(ing)
+                // Δύο ανά σειρά, όπως και τα έξτρα — τα ονόματα υλικών είναι κοντά και σε μία στήλη
+                // έμενε μισή οθόνη κενή δεξιά, σπρώχνοντας τα έξτρα και το ΠΡΟΣΘΗΚΗ πιο κάτω.
+                ingredients.chunked(2).forEach { pair ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        pair.forEach { ing ->
+                            val included = ing !in removed
+                            SelectableRow(
+                                selected = included,
+                                onClick = { if (included) removed.add(ing) else removed.remove(ing) },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Checkbox(checked = included, onCheckedChange = {
+                                    if (it) removed.remove(ing) else removed.add(ing)
+                                })
+                                Text(ing, fontSize = 14.sp, maxLines = 2)
+                            }
+                        }
+                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -662,25 +773,24 @@ private fun CustomizerSheet(
 
             if (options.extras.isNotEmpty()) {
                 SectionLabel("Έξτρα")
-                options.extras.forEach { extra ->
-                    val qty = extraQty[extra.name] ?: 0
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(extra.name, fontWeight = FontWeight.Medium)
-                            Text(
-                                if (extra.price > 0) String.format(Locale.getDefault(), "+€%.2f", extra.price) else "δωρεάν",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // Δύο ανά σειρά: τα έξτρα είναι κοντά στα 20 και σε μία στήλη ο σερβιτόρος σκρόλαρε
+                // ατέλειωτα για να φτάσει στα τελευταία. Το στέπερ μπαίνει ΚΑΤΩ από το όνομα, όχι δίπλα:
+                // στο μισό πλάτος δεν χωρούν και τα δύο, και το να μικρύνει το στέπερ θα έκανε τα κουμπιά
+                // μικρότερα από το όριο αφής — λάθος πάτημα σε ώρα αιχμής κοστίζει πιο πολύ από το σκρολ.
+                options.extras.chunked(2).forEach { pair ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        pair.forEach { extra ->
+                            val qty = extraQty[extra.name] ?: 0
+                            ExtraCell(
+                                extra = extra,
+                                quantity = qty,
+                                onInc = { extraQty[extra.name] = (qty + 1).coerceAtMost(10) },
+                                onDec = { if (qty > 0) extraQty[extra.name] = qty - 1 },
                             )
                         }
-                        QuantityStepper(
-                            qty,
-                            onInc = { extraQty[extra.name] = (qty + 1).coerceAtMost(10) },
-                            onDec = { if (qty > 0) extraQty[extra.name] = qty - 1 },
-                        )
+                        // Μονός αριθμός έξτρα: το τελευταίο κρατά το μισό πλάτος αντί να απλωθεί σε όλη
+                        // τη σειρά, ώστε η στήλη να μένει ευθυγραμμισμένη με τις από πάνω.
+                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -734,10 +844,15 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun SelectableRow(selected: Boolean, onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+private fun SelectableRow(
+    selected: Boolean,
+    onClick: () -> Unit,
+    // Προεπιλογή όλο το πλάτος· τα υλικά το περνούν σε δύο στήλες με weight(1f).
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clip(MaterialTheme.shapes.small)
             .background(if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(onClick = onClick)

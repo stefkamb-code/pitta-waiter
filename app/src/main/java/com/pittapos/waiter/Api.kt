@@ -24,12 +24,28 @@ data class MenuProductDto(
     val nameEn: String?,
     val price: Double,
     val customizable: Boolean,
+    // Τα βασικά υλικά ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ προϊόντος. Το ταμείο μετράει το «σκέτο» και γράφει το «μόνο με:»
+    // της απόδειξης με αυτά, οπότε ο customizer πρέπει να δείχνει αυτά — όχι τον κοινό κατάλογο του
+    // CustomizerOptionsDto.ingredients (πριν έδειχνε εκείνον παντού: ξεμαρκάριζες υλικά που το προϊόν
+    // δεν είχε καν και η κουζίνα έπαιρνε ΣΚΕΤΟ σε παραγγελία που δεν το ζήτησε).
+    // Nullable για ταμείο που δεν στέλνει ακόμα το πεδίο — τότε πέφτουμε στον κοινό κατάλογο, όπως πριν.
+    // Άδεια λίστα σημαίνει «προϊόν χωρίς βασικά υλικά» και ΔΕΝ είναι το ίδιο με null (βλ. σχόλιο στο
+    // doublePitaPrices: το Gson αγνοεί τα Kotlin defaults, το πεδίο που λείπει έρχεται όντως null).
+    val ingredients: List<String>? = null,
 )
 
 data class MenuCategoryDto(
     val id: String,
     val name: String,
     val products: List<MenuProductDto>,
+    // Οι κανόνες της κατηγορίας, όπως τους έχει ΤΟ ΤΑΜΕΙΟ (Διαχείριση Καταλόγου). Παλιότερα ήταν
+    // γραμμένα εδώ μέσα τα ονόματα («ΤΥΛΙΧΤΑ»...), οπότε μια μετονομασία κατηγορίας στο ταμείο έκοβε
+    // αθόρυβα ψωμί και διπλή πίτα από το κινητό μέχρι να βγει νέο APK. Τώρα ρωτάμε το ταμείο.
+    // Nullable: ταμείο που δεν τα στέλνει ακόμα → πέφτουμε στους τοπικούς κανόνες (βλ. MenuScreen).
+    val hasBread: Boolean? = null,
+    val fuseBreadIntoName: Boolean? = null,
+    val supportsDoublePita: Boolean? = null,
+    val doublePitaPrice: Double? = null,
 )
 
 data class ExtraOptionDto(
@@ -45,6 +61,9 @@ data class CustomizerOptionsDto(
     // constructor, οπότε ένα παλιότερο POS που δεν στέλνει ακόμα αυτό το κλειδί στο JSON δίνει null εδώ
     // ΠΑΡΑ το Kotlin default (δοκιμασμένο: crash στο MenuScreen χωρίς αυτό). Πάντα .orEmpty() στη χρήση.
     val doublePitaPrices: Map<String, Double>? = null,
+    // Η συντομογραφία κάθε ψωμιού («Αραβική» → «ΑΡ.») όπως τη γράφει το ταμείο. Την υπολόγιζε και το
+    // κινητό μόνο του· αν άλλαζαν τα ψωμιά, το καλάθι του σερβιτόρου έγραφε άλλα από την απόδειξη.
+    val breadAbbreviations: Map<String, String>? = null,
 )
 
 data class OrderLineRequest(
