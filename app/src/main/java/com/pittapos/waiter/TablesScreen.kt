@@ -246,6 +246,11 @@ private fun PersonsDialog(table: Int, onDismiss: () -> Unit, onPick: (Int) -> Un
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        // Καθαρό λευκό φόντο. Ο Material 3 βάφει από μόνος του το φόντο του διαλόγου με το primary
+        // χρώμα (tonal elevation) — με κόκκινη μάρκα, ολόκληρο το πλαίσιο έβγαινε ροζοκόκκινο γύρω
+        // γύρω. Το κόκκινο μένει μόνο στην ενέργεια που επιβεβαιώνει.
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
         title = { Text("Τραπέζι $table — πόσα άτομα;", fontWeight = FontWeight.ExtraBold) },
         text = {
             Column {
@@ -305,8 +310,10 @@ private fun PersonsDialog(table: Int, onDismiss: () -> Unit, onPick: (Int) -> Un
         dismissButton = {
             // Μέσα στο πληκτρολόγιο το «Άκυρο» γυρνά στα κουμπιά, δεν κλείνει όλο τον διάλογο — αλλιώς
             // ένα λάθος πάτημα στο «＋» θα σε πετούσε έξω και θα ξανάρχιζες.
+            // Ουδέτερο: το κόκκινο μένει στη μία ενέργεια που επιβεβαιώνει («Μαζί»/«ΟΚ») — δύο κόκκινα
+            // κουμπιά δίπλα δίπλα δεν λένε ποιο είναι το κύριο.
             TextButton(onClick = { if (typing) typing = false else onDismiss() }) {
-                Text(if (typing) "Πίσω" else "Άκυρο")
+                Text(if (typing) "Πίσω" else "Άκυρο", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         shape = MaterialTheme.shapes.large,
