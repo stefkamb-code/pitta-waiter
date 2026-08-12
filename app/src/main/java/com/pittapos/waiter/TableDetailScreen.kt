@@ -55,6 +55,14 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
     LaunchedEffect(Unit) { load() }
 
     val outstanding = orders.sumOf { o -> o.lines.filter { !it.isSettled }.sumOf { it.revenue } }
+
+    // Όλες οι γραμμές του τραπεζιού μαζεμένες ανά ΑΤΟΜΟ. Το null (ΑΧΡΕΩΤΑ) πάει τελευταίο: είναι ό,τι
+    // δεν χρεώθηκε σε κανέναν — παραγγελία από το ταμείο πριν μπουν τα άτομα, ή κοινό πιάτο.
+    val personGroups = orders
+        .flatMap { o -> o.lines.map { o to it } }
+        .groupBy { it.second.person }
+        .toList()
+        .sortedBy { it.first ?: Int.MAX_VALUE }
     val selectedTotal = orders.sumOf { o ->
         o.lines.filter { (o.orderNumber to it.lineIndex) in selected }.sumOf { it.revenue }
     }
@@ -139,10 +147,31 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
         },
         floatingActionButton = {
             if (selected.isEmpty()) {
+                // Σε τραπέζι που πληρώνει χωριστά, η προσθήκη είναι ΠΡΟΣΘΗΚΗ ΑΤΟΜΟΥ: ήρθε κι άλλος στην
+                // παρέα και θέλει δική του απόδειξη. Ανεβάζουμε το πλήθος ατόμων κατά ένα και η οθόνη
+                // παραγγελίας ξεκινά μόνη της από αυτόν (τον πρώτο που δεν έχει παραγγείλει).
+                val splitting = personGroups.any { it.first != null }
                 ExtendedFloatingActionButton(
-                    onClick = onAddMore,
+                    onClick = {
+                        if (!splitting) {
+                            onAddMore()
+                            return@ExtendedFloatingActionButton
+                        }
+                        scope.launch {
+                            val known = personGroups.mapNotNull { it.first }
+                            val next = (known.maxOrNull() ?: -1) + 2
+                            try {
+                                ApiClient.create(prefs.serverUrl).setPersons(table, SetPersonsRequest(prefs.pin, next))
+                            } catch (e: Exception) {
+                                // Χωρίς δίκτυο δεν μπλοκάρουμε — μπαίνει στο μενού κανονικά.
+                            }
+                            onAddMore()
+                        }
+                    },
                     icon = { Icon(Icons.Default.Add, null) },
-                    text = { Text("ΠΡΟΣΘΗΚΗ", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Text(if (splitting) "ΠΡΟΣΘΗΚΗ ΑΤΟΜΟΥ" else "ΠΡΟΣΘΗΚΗ", fontWeight = FontWeight.Bold)
+                    },
                 )
             }
         },
@@ -196,12 +225,25 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
                         contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 96.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        items(orders) { order ->
-                            RoundCard(
-                                order = order,
-                                isSelected = { line -> (order.orderNumber to line.lineIndex) in selected },
-                                onToggle = { line -> toggleSelect(order, line) },
-                            )
+                        // Χωρισμένο σε ΑΤΟΜΑ όταν το τραπέζι πληρώνει χωριστά — μία ομάδα = μία απόδειξη
+                        // στην ταμειακή. Αλλιώς μένει όπως ήταν, ανά γύρο παραγγελίας.
+                        if (personGroups.any { it.first != null }) {
+                            items(personGroups) { (person, entries) ->
+                                PersonCard(
+                                    person = person,
+                                    entries = entries,
+                                    isSelected = { o, line -> (o.orderNumber to line.lineIndex) in selected },
+                                    onToggle = { o, line -> toggleSelect(o, line) },
+                                )
+                            }
+                        } else {
+                            items(orders) { order ->
+                                RoundCard(
+                                    order = order,
+                                    isSelected = { line -> (order.orderNumber to line.lineIndex) in selected },
+                                    onToggle = { line -> toggleSelect(order, line) },
+                                )
+                            }
                         }
                     }
                 }
@@ -259,6 +301,47 @@ private fun OutstandingHeader(outstanding: Double) {
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
+        }
+    }
+}
+
+/** Ένα άτομο με ό,τι πήρε — **μία κάρτα = μία απόδειξη** στην ταμειακή του μαγαζιού. */
+@Composable
+private fun PersonCard(
+    person: Int?,
+    entries: List<Pair<TableOrderDto, TableOrderLineDto>>,
+    isSelected: (TableOrderDto, TableOrderLineDto) -> Boolean,
+    onToggle: (TableOrderDto, TableOrderLineDto) -> Unit,
+) {
+    val outstanding = entries.filter { !it.second.isSettled }.sumOf { it.second.revenue }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp, 12.dp, 16.dp, 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    if (person == null) "ΑΧΡΕΩΤΑ" else "ΑΤΟΜΟ ${personLabel(person)}",
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    if (outstanding > 0) String.format(Locale.getDefault(), "%.2f€", outstanding) else "✓ πληρωμένο",
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (outstanding > 0) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            entries.forEachIndexed { index, (order, line) ->
+                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                OrderLineRow(line, selected = isSelected(order, line)) { onToggle(order, line) }
+            }
         }
     }
 }

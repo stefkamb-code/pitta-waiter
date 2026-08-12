@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -37,6 +39,8 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var showSettings by remember { mutableStateOf(false) }
+    // Ποιο τραπέζι μόλις άνοιξε ο σερβιτόρος και περιμένει την απάντηση «πόσα άτομα;».
+    var askPersonsFor by remember { mutableStateOf<Int?>(null) }
     val snackbarHost = remember { SnackbarHostState() }
 
     suspend fun load() {
@@ -67,6 +71,27 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
             prefs = prefs,
             onDismiss = { showSettings = false },
             onSaved = { serverUrl = prefs.serverUrl },
+        )
+    }
+
+    askPersonsFor?.let { table ->
+        PersonsDialog(
+            table = table,
+            onDismiss = { askPersonsFor = null },
+            onPick = { count ->
+                askPersonsFor = null
+                scope.launch {
+                    // Η αποτυχία ΔΕΝ σταματά τη δουλειά: ο σερβιτόρος μπαίνει στο τραπέζι έτσι κι
+                    // αλλιώς και τα άτομα μπαίνουν από το ταμείο. Το να μπλοκάρει η παραγγελία επειδή
+                    // δεν καταγράφηκε ο διαχωρισμός θα ήταν πολύ χειρότερο από το να λείπει.
+                    try {
+                        ApiClient.create(serverUrl).setPersons(table, SetPersonsRequest(prefs.pin, count))
+                    } catch (e: Exception) {
+                        snackbarHost.showSnackbar("Τα άτομα δεν καταχωρήθηκαν — βάλ' τα από το ταμείο")
+                    }
+                    onOpenTable(table)
+                }
+            },
         )
     }
 
@@ -117,7 +142,14 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(tables) { t -> TableCard(t, onClick = { onOpenTable(t.number) }) }
+                    // Κλειστό τραπέζι = νέα παρέα: ρωτάμε πόσα άτομα ΠΡΙΝ ανοίξει, γιατί ο σερβιτόρος
+                    // το ξέρει εκείνη ακριβώς τη στιγμή. Ανοιχτό τραπέζι μπαίνει κατευθείαν — τα άτομα
+                    // έχουν ήδη δηλωθεί και δεν ξαναρωτιούνται σε κάθε γύρο.
+                    items(tables) { t ->
+                        TableCard(t, onClick = {
+                            if (t.isOpen) onOpenTable(t.number) else askPersonsFor = t.number
+                        })
+                    }
                 }
             }
         }
@@ -178,7 +210,8 @@ private fun TableCard(table: TableDto, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
                 Text(
-                    "${table.roundCount} παραγγελίες",
+                    if (table.persons > 1) "${table.roundCount} παραγγελίες · ${table.persons} άτομα"
+                    else "${table.roundCount} παραγγελίες",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
                 )
@@ -192,6 +225,96 @@ private fun TableCard(table: TableDto, onClick: () -> Unit) {
         }
     }
 }
+
+/**
+ * «Πόσα άτομα;» — η ερώτηση τη στιγμή που ανοίγει το τραπέζι.
+ *
+ * Το μαγαζί κόβει τις αποδείξεις σε ξεχωριστή ταμειακή μηχανή και ο κανόνας είναι **ένα άτομο = μία
+ * απόδειξη**. Ο σερβιτόρος το ξέρει αμέσως μόλις καθίσει η παρέα («όλοι μαζί» / «ο καθένας το δικό
+ * του»), οπότε ρωτιέται εδώ και όχι στο τέλος — στο τέλος θα χρειαζόταν να ξαναθυμηθεί ποιος πήρε τι.
+ *
+ * Μεγάλα κουμπιά με νούμερα: ο σερβιτόρος το πατάει όρθιος, με το ένα χέρι, μέσα σε δευτερόλεπτο.
+ */
+@Composable
+private fun PersonsDialog(table: Int, onDismiss: () -> Unit, onPick: (Int) -> Unit) {
+    // Τα κουμπιά πιάνουν μέχρι το 11 — από εκεί και πάνω είναι εκδήλωση, όχι τραπέζι, και δεν αξίζει να
+    // γεμίζει η οθόνη με νούμερα που δεν πατιούνται ποτέ. Το «＋» ανοίγει πληκτρολόγιο για τον αριθμό.
+    var typing by remember { mutableStateOf(false) }
+    var typed by remember { mutableStateOf("") }
+    val typedCount = typed.toIntOrNull()
+    val typedOk = typedCount != null && typedCount in 1..MAX_PERSONS
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Τραπέζι $table — πόσα άτομα;", fontWeight = FontWeight.ExtraBold) },
+        text = {
+            Column {
+                Text(
+                    "Κάθε άτομο = μία απόδειξη. Αν πληρώσουν όλοι μαζί, πάτα «Μαζί».",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(16.dp))
+                if (typing) {
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = { typed = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("Αριθμός ατόμων") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "μέχρι $MAX_PERSONS άτομα",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    for (row in 0 until 3) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            for (col in 1..4) {
+                                val n = row * 4 + col
+                                val isPlus = n > 11
+                                FilledTonalButton(
+                                    onClick = { if (isPlus) typing = true else onPick(n) },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(vertical = 14.dp),
+                                    shape = MaterialTheme.shapes.medium,
+                                ) {
+                                    Text(if (isPlus) "＋" else "$n", fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (typing) {
+                TextButton(onClick = { typedCount?.let(onPick) }, enabled = typedOk) { Text("ΟΚ") }
+            } else {
+                TextButton(onClick = { onPick(1) }) { Text("Μαζί") }
+            }
+        },
+        dismissButton = {
+            // Μέσα στο πληκτρολόγιο το «Άκυρο» γυρνά στα κουμπιά, δεν κλείνει όλο τον διάλογο — αλλιώς
+            // ένα λάθος πάτημα στο «＋» θα σε πετούσε έξω και θα ξανάρχιζες.
+            TextButton(onClick = { if (typing) typing = false else onDismiss() }) {
+                Text(if (typing) "Πίσω" else "Άκυρο")
+            }
+        },
+        shape = MaterialTheme.shapes.large,
+    )
+}
+
+/** Ίδιο όριο με το ταμείο (TablePersonsService.MaxPersons) — πάνω από αυτό είναι λάθος πάτημα. */
+private const val MAX_PERSONS = 24
 
 /** Μικρό βοηθητικό ώστε το BorderStroke να μη χρειάζεται ξεχωριστό import πρόθεμα παντού. */
 private fun BorderStroke2(color: androidx.compose.ui.graphics.Color) =

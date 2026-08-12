@@ -16,6 +16,10 @@ data class TableDto(
     val total: Double,
     val roundCount: Int,
     val lastOrderTime: String?,
+    // Πόσα άτομα δηλώθηκαν στο άνοιγμα — δηλαδή ΠΟΣΕΣ ΑΠΟΔΕΙΞΕΙΣ θα κοπούν στην ταμειακή του μαγαζιού.
+    // 0 = δεν ρωτήθηκε ακόμα, οπότε ρωτάμε. Ταμείο παλιότερης έκδοσης δεν στέλνει το πεδίο και το Gson
+    // το αφήνει 0 — τότε η εφαρμογή απλώς ρωτάει και η απάντηση αγνοείται, καμία ζημιά.
+    val persons: Int = 0,
 )
 
 data class MenuProductDto(
@@ -78,6 +82,9 @@ data class OrderLineRequest(
     val extras: Map<String, Int>? = null,
     val note: String? = null,
     val doublePita: Boolean = false,
+    // Σε ποιο άτομο του τραπεζιού χρεώνεται (0-based: 0 = «Α»). Το μαγαζί κόβει μία απόδειξη ανά άτομο,
+    // οπότε ο σερβιτόρος γράφει την παραγγελία ανά άτομο. null = σε κανέναν (πληρώνουν μαζί).
+    val person: Int? = null,
 )
 
 data class SubmitOrderRequest(
@@ -85,6 +92,10 @@ data class SubmitOrderRequest(
     val pin: String,
     val lines: List<OrderLineRequest>,
     val note: String? = null,
+    // Δελτίο κουζίνας: σε τραπέζι με άτομα στέλνουμε false για όλους εκτός από τον τελευταίο, ώστε ο
+    // ψήστης να πάρει ΕΝΑ χαρτί με όλο το τραπέζι αντί για ένα ανά άτομο. Οι παραγγελίες καταχωρούνται
+    // κανονικά μία-μία — μία απόδειξη ανά άτομο.
+    val printNow: Boolean = true,
 )
 
 data class SubmitOrderResponse(
@@ -99,6 +110,9 @@ data class TableOrderLineDto(
     val revenue: Double,
     val details: String,
     val isSettled: Boolean,
+    // Σε ποιο άτομο χρεώνεται (0-based). null = σε κανέναν, ή ταμείο παλιότερης έκδοσης — τότε η
+    // καρτέλα του τραπεζιού δείχνει τους γύρους όπως πάντα, χωρίς ομαδοποίηση.
+    val person: Int? = null,
 )
 
 data class TableOrderDto(
@@ -116,6 +130,9 @@ data class SettleLineRequest(
 )
 
 data class CloseTableRequest(val pin: String)
+
+/** «Πόσα άτομα;» στο άνοιγμα του τραπεζιού — ένα άτομο = μία απόδειξη στην ταμειακή. */
+data class SetPersonsRequest(val pin: String, val count: Int)
 
 interface PittaApi {
     @GET("api/tables")
@@ -138,6 +155,9 @@ interface PittaApi {
 
     @POST("api/tables/{table}/close")
     suspend fun closeTable(@Path("table") table: Int, @Body request: CloseTableRequest): Response<Unit>
+
+    @POST("api/tables/{table}/persons")
+    suspend fun setPersons(@Path("table") table: Int, @Body request: SetPersonsRequest): Response<Unit>
 }
 
 /**

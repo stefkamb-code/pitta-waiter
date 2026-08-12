@@ -95,6 +95,13 @@ class MainActivity : ComponentActivity() {
                                 prefs = prefs,
                                 table = table,
                                 onDone = { safeBack() },
+                                // Τέλος παραγγελίας για όλα τα άτομα: πίσω στην αρχική με τα τραπέζια,
+                                // όχι στην καρτέλα του τραπεζιού — ο σερβιτόρος πάει στο επόμενο τραπέζι.
+                                onFinished = {
+                                    debounced {
+                                        navController.popBackStack("tables", inclusive = false)
+                                    }
+                                },
                             )
                         }
                     }

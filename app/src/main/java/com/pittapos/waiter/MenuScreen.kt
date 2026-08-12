@@ -135,9 +135,19 @@ private data class DraftLine(
     val doublePita: Boolean = false,
 )
 
+/** Ένα άτομο που έχει ήδη σταλεί σε αυτή τη συνεδρία — κρατιέται ώστε ο σερβιτόρος να μπορεί να δει
+ *  ΟΛΗ την παραγγελία του τραπεζιού, όχι μόνο του ατόμου που γράφει τώρα. */
+private data class SentRound(val person: Int, val total: Double, val lines: List<DraftLine>)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
+/**
+ * @param onDone βελάκι «πίσω» — γυρνά ένα βήμα, στο τραπέζι.
+ * @param onFinished τελείωσε η παραγγελία ΟΛΩΝ των ατόμων — βγαίνει τέρμα έξω, στην αρχική με τα
+ *   τραπέζια. Ο σερβιτόρος έχει τελειώσει με αυτό το τραπέζι και το επόμενο πράγμα που θέλει είναι
+ *   η κάτοψη, όχι η καρτέλα του τραπεζιού που μόλις έκλεισε.
+ */
+fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit, onFinished: () -> Unit) {
     val scope = rememberCoroutineScope()
     var categories by remember { mutableStateOf<List<MenuCategoryDto>>(emptyList()) }
     var customizerOptions by remember { mutableStateOf<CustomizerOptionsDto?>(null) }
@@ -158,6 +168,19 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     var showOrderNote by remember { mutableStateOf(false) }
     var showCartReview by remember { mutableStateOf(false) }
     var editingLine by remember { mutableStateOf<DraftLine?>(null) }
+    // Πόσα άτομα δηλώθηκαν στο άνοιγμα του τραπεζιού και σε ποιο βρισκόμαστε τώρα (0-based).
+    // Ένα άτομο = μία απόδειξη = ΕΝΑΣ ΓΥΡΟΣ: γράφεις του Α, στέλνεις, και η οθόνη σε ξαναβάζει στο
+    // μενού για τον Β — μέχρι να τελειώσουν όσα άτομα δήλωσες. Έτσι δεν χρειάζεται ο σερβιτόρος να
+    // θυμάται ποιανού γράφει, ούτε μπορεί να ξεχάσει κάποιον.
+    var personCount by remember { mutableStateOf(0) }
+    var person by remember { mutableStateOf(0) }
+    val splitting = personCount > 1
+    /// Τα άτομα που στάλθηκαν ήδη σε αυτή τη συνεδρία, με το ποσό τους — μένουν στην οθόνη ώστε ο
+    /// σερβιτόρος να βλέπει τι έχει ήδη περάσει και να μη ρωτήσει δεύτερη φορά τον ίδιο άνθρωπο.
+    val sentPersons = remember { mutableStateListOf<SentRound>() }
+    /// Ποια άτομα έχουν ήδη παραγγείλει — ώστε το «επόμενο» να μην ξαναπάει σε κάποιον που τελείωσε,
+    /// ακόμα κι αν ο σερβιτόρος γύρισε ενδιάμεσα πίσω σε αυτόν επειδή άλλαξε γνώμη.
+    val personsDone = remember { mutableStateListOf<Int>() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -172,6 +195,16 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
             val api = ApiClient.create(prefs.serverUrl)
             categories = api.getMenu()
             customizerOptions = api.getCustomizerOptions()
+            // Πόσα άτομα έχει το τραπέζι — αν αποτύχει, μένει 0 και η οθόνη δουλεύει όπως πάντα.
+            personCount = api.getTables().firstOrNull { it.number == table }?.persons ?: 0
+            // Ποια άτομα έχουν ΗΔΗ παραγγείλει σε αυτό το τραπέζι — το ξέρει το ταμείο, όχι η οθόνη.
+            // Έτσι, μπαίνοντας δεύτερη φορά (νέος γύρος, ή «προσθήκη ατόμου» επειδή ήρθε κι άλλος),
+            // ξεκινάμε από τον πρώτο που ΔΕΝ έχει παραγγείλει, αντί να ξαναρωτάμε τον Α από την αρχή.
+            if (personCount > 1) {
+                val already = api.getTableOrders(table).flatMap { it.lines }.mapNotNull { it.person }.distinct()
+                personsDone.addAll(already)
+                person = (0 until personCount).firstOrNull { it !in already } ?: 0
+            }
         } catch (e: Exception) {
             error = "Δεν φορτώθηκε το μενού — έλεγξε τη σύνδεση"
         }
@@ -180,6 +213,59 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
 
     val total = cartLines.sumOf { it.unitPrice * it.quantity }
     val itemCount = cartLines.sumOf { it.quantity }
+    // Ποιοι μένουν μετά από αυτόν που γράφεται τώρα.
+    val remainingPersons = (0 until personCount).filter { it != person && it !in personsDone }
+    val lastPerson = !splitting || remainingPersons.isEmpty()
+
+    /** Καθαρίζει την οθόνη και προχωρά στο επόμενο άτομο που δεν έχει παραγγείλει — ή βγαίνει. */
+    fun nextPersonOrFinish() {
+        val next = remainingPersons.firstOrNull()
+        if (!splitting || next == null) {
+            onFinished()
+            return
+        }
+        cartLines.clear()
+        orderNote = ""
+        showOrderNote = false
+        selectedCategory = null
+        selectedProductId = null
+        person = next
+    }
+
+    /** Πήγαινε σε συγκεκριμένο άτομο — ό,τι μπει τώρα χρεώνεται στη ΔΙΚΗ ΤΟΥ απόδειξη. Δεν σβήνει ποτέ
+     *  ό,τι έχει ήδη σταλεί· απλώς προσθέτεις κι άλλα, για όταν κάποιος αλλάξει γνώμη. */
+    fun goToPerson(target: Int) {
+        cartLines.clear()
+        orderNote = ""
+        showOrderNote = false
+        selectedCategory = null
+        selectedProductId = null
+        person = target
+    }
+
+    /**
+     * Έξοδος με το βελάκι = **η παραγγελία δεν ισχύει**. Δεν τυπώνεται τίποτα: το δελτίο κουζίνας
+     * βγαίνει ΜΟΝΟ όταν κλείσει το τελευταίο άτομο. Ό,τι έχει μείνει στην ουρά του ταμείου μένει
+     * ατύπωτο — δεν πάει φαγητό στην κουζίνα για παραγγελία που ο σερβιτόρος εγκατέλειψε.
+     */
+    fun leaveScreen() {
+        // Μέσα στη σειρά των ατόμων, το «πίσω» πάει ένα ΑΤΟΜΟ πίσω (Β → Α), δεν βγάζει από το τραπέζι.
+        // Βγαίνεις μόνο από το πρώτο άτομο. Δεν τυπώνεται τίποτα σε καμία περίπτωση: το δελτίο κουζίνας
+        // βγαίνει μόνο όταν κλείσει το τελευταίο άτομο.
+        if (splitting && person > 0) {
+            cartLines.clear()
+            orderNote = ""
+            showOrderNote = false
+            selectedCategory = null
+            selectedProductId = null
+            person -= 1
+            scope.launch {
+                snackbarHost.showSnackbar("Πίσω στο ΑΤΟΜΟ ${personLabel(person)}")
+            }
+            return
+        }
+        onDone()
+    }
 
     fun simpleQuantity(product: MenuProductDto): Int =
         cartLines.firstOrNull { it.key == "p:${product.id}" }?.quantity ?: 0
@@ -230,6 +316,9 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
     if (showCartReview) {
         CartReviewSheet(
             lines = cartLines,
+            sent = sentPersons,
+            currentPerson = if (splitting) person else null,
+            onSelectPerson = { p -> showCartReview = false; goToPerson(p) },
             isCustomizable = { productId -> categories.flatMap { it.products }.any { it.id == productId && it.customizable } },
             onDismiss = { showCartReview = false },
             onInc = { key -> changeLineQuantity(key, 1) },
@@ -271,9 +360,22 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
-                title = { Text(selectedCategory?.name ?: "Τραπέζι $table", fontWeight = FontWeight.ExtraBold) },
+                title = {
+                    Column {
+                        Text(selectedCategory?.name ?: "Τραπέζι $table", fontWeight = FontWeight.ExtraBold)
+                        // Ποιανού γράφεις — πάντα μπροστά στα μάτια, σε κάθε κατηγορία και σε κάθε βήμα.
+                        if (splitting) {
+                            Text(
+                                "ΑΤΟΜΟ ${personLabel(person)}  ·  ${person + 1} από $personCount",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
-                    IconButton(onClick = { if (selectedCategory != null) selectedCategory = null else onDone() }) {
+                    IconButton(onClick = { if (selectedCategory != null) selectedCategory = null else leaveScreen() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Πίσω")
                     }
                 },
@@ -281,10 +383,27 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
             )
         },
         bottomBar = {
-            if (itemCount > 0) {
+            // Με χωρισμό σε άτομα η μπάρα μένει ΠΑΝΤΑ ορατή, ακόμα κι όταν το καλάθι είναι άδειο: εκεί
+            // κάθεται το «ΕΠΟΜΕΝΟΣ», για το άτομο που τελικά δεν παρήγγειλε τίποτα.
+            if (itemCount > 0 || splitting) {
                 Surface(shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surface) {
                     Column(modifier = Modifier.padding(20.dp, 14.dp)) {
-                        if (showOrderNote) {
+                        // Τι έχει ήδη σταλεί σε αυτό το τραπέζι, ανά άτομο. Στο κινητό δεν χωράει
+                        // στήλη όπως στο ταμείο, οπότε μπαίνει σαν μία γραμμή πάνω από το καλάθι.
+                        if (sentPersons.isNotEmpty()) {
+                            Text(
+                                sentPersons.joinToString("  ·  ") { r ->
+                                    String.format(Locale.getDefault(), "✓ %s %.2f€", personLabel(r.person), r.total)
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
+                        if (itemCount == 0) {
+                            // τίποτα — μόνο το κουμπί παρακάτω
+                        } else if (showOrderNote) {
                             OutlinedTextField(
                                 value = orderNote,
                                 onValueChange = { orderNote = it },
@@ -308,42 +427,88 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(MaterialTheme.shapes.small)
-                                .clickable { showCartReview = true }
-                                .padding(vertical = 10.dp, horizontal = 4.dp),
-                        ) {
-                            Text(
-                                "$itemCount είδη  ›",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Text(
-                                String.format(Locale.getDefault(), "€%.2f", total),
-                                fontWeight = FontWeight.ExtraBold,
-                                style = MaterialTheme.typography.titleLarge,
-                            )
+                        if (itemCount > 0) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .clickable { showCartReview = true }
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                            ) {
+                                Text(
+                                    "$itemCount είδη  ›",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    String.format(Locale.getDefault(), "€%.2f", total),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    style = MaterialTheme.typography.titleLarge,
+                                )
+                            }
+                        } else {
+                            // Πατιέται κι εδώ: με άδειο καλάθι ο σερβιτόρος θέλει συχνά να δει τι έχει
+                            // ήδη περάσει στα προηγούμενα άτομα πριν ρωτήσει τον επόμενο.
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .then(if (sentPersons.isEmpty()) Modifier else Modifier.clickable { showCartReview = true })
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                            ) {
+                                Text(
+                                    "ΑΤΟΜΟ ${personLabel(person)}",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    if (sentPersons.isEmpty()) "δεν παρήγγειλε τίποτα ακόμα"
+                                    else "δεν παρήγγειλε τίποτα ακόμα  ›",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                         Button(
-                            enabled = itemCount > 0 && !sending,
+                            enabled = !sending,
                             shape = MaterialTheme.shapes.medium,
                             onClick = {
+                                // Άδειο καλάθι = «δεν πήρε τίποτα»: προχωράμε στο επόμενο άτομο χωρίς να
+                                // σταλεί άδεια παραγγελία (το ταμείο τη θα την απέρριπτε ούτως ή άλλως).
+                                if (itemCount == 0) {
+                                    nextPersonOrFinish()
+                                    return@Button
+                                }
                                 scope.launch {
                                     sending = true
                                     val lines = cartLines.map { l ->
-                                        OrderLineRequest(l.productId, l.quantity, l.bread, l.removedIngredients, l.extras, l.note, l.doublePita)
+                                        OrderLineRequest(
+                                            l.productId, l.quantity, l.bread, l.removedIngredients,
+                                            l.extras, l.note, l.doublePita,
+                                            // Κάθε γύρος ανήκει σε ΕΝΑ άτομο — αυτό γίνεται μία απόδειξη.
+                                            person = if (splitting) person else null,
+                                        )
                                     }
                                     try {
                                         val response = ApiClient.create(prefs.serverUrl).submitOrder(
                                             SubmitOrderRequest(
                                                 table = table, pin = prefs.pin, lines = lines,
                                                 note = orderNote.trim().ifEmpty { null },
+                                                // Δελτίο κουζίνας μόνο στο ΤΕΛΕΥΤΑΙΟ άτομο: ένα χαρτί
+                                                // με όλο το τραπέζι, όπως ήταν πριν μπουν τα άτομα.
+                                                printNow = lastPerson,
                                             ),
                                         )
                                         if (response.isSuccessful) {
-                                            onDone()
+                                            val next = if (lastPerson) null else personLabel(person + 1)
+                                            if (splitting) {
+                                                sentPersons.add(SentRound(person, total, cartLines.toList()))
+                                                if (person !in personsDone) personsDone.add(person)
+                                            }
+                                            nextPersonOrFinish()
+                                            if (next != null) {
+                                                snackbarHost.showSnackbar("Καταχωρήθηκε · σειρά του ΑΤΟΜΟΥ $next")
+                                            }
                                         } else {
                                             snackbarHost.showSnackbar(
                                                 if (response.code() == 401) "Λάθος PIN — άλλαξέ το στις ρυθμίσεις"
@@ -357,7 +522,18 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit) {
                                     }
                                 }
                             },
-                        ) { Text(if (sending) "..." else "ΑΠΟΣΤΟΛΗ ΠΑΡΑΓΓΕΛΙΑΣ", fontWeight = FontWeight.Bold) }
+                        ) {
+                            Text(
+                                when {
+                                    sending -> "..."
+                                    itemCount == 0 && lastPerson -> "ΤΕΛΟΣ"
+                                    itemCount == 0 -> "ΕΠΟΜΕΝΟΣ ▸ ${personLabel(person + 1)}"
+                                    lastPerson -> "ΑΠΟΣΤΟΛΗ ΠΑΡΑΓΓΕΛΙΑΣ"
+                                    else -> "ΑΠΟΣΤΟΛΗ ▸ ${personLabel(person + 1)}"
+                                },
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
                     }
                 }
@@ -946,6 +1122,9 @@ private fun SelectableRow(
 @Composable
 private fun CartReviewSheet(
     lines: List<DraftLine>,
+    sent: List<SentRound>,
+    currentPerson: Int?,
+    onSelectPerson: (Int) -> Unit,
     isCustomizable: (String) -> Boolean,
     onDismiss: () -> Unit,
     onInc: (String) -> Unit,
@@ -965,6 +1144,63 @@ private fun CartReviewSheet(
         ) {
             Text("Το καλάθι σου", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             Spacer(Modifier.height(16.dp))
+
+            // ΟΛΗ η παραγγελία του τραπεζιού, όχι μόνο του ατόμου που γράφεται τώρα: τα ήδη σταλμένα
+            // άτομα φαίνονται από πάνω, σε μικρά γράμματα και ξεθωριασμένα, ώστε ο σερβιτόρος να
+            // θυμάται τι πέρασε και σε ποιον. Δεν αλλάζουν από εδώ — έχουν ήδη καταχωρηθεί στο ταμείο.
+            sent.forEach { round ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // Πατιέται: γυρνάς σε αυτό το άτομο για να προσθέσεις κι άλλα.
+                        .clickable { onSelectPerson(round.person) }
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "✓ ΑΤΟΜΟ ${personLabel(round.person)}  ✎",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        String.format(Locale.getDefault(), "%.2f€", round.total),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                round.lines.forEach { l ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "${l.quantity}× ${l.name}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            String.format(Locale.getDefault(), "%.2f€", l.unitPrice * l.quantity),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            if (sent.isNotEmpty() && currentPerson != null) {
+                HorizontalDivider()
+                Text(
+                    "▸ ΑΤΟΜΟ ${personLabel(currentPerson)}  —  γράφεις τώρα",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            }
+
             if (lines.isEmpty()) {
                 Text(
                     "Άδειο καλάθι",
@@ -1007,3 +1243,12 @@ private fun CartReviewSheet(
         }
     }
 }
+
+/**
+ * Το γράμμα του ατόμου: 0 → «Α», 1 → «Β». Ίδια γράμματα με το ταμείο (TablePersonsService.Label) —
+ * ο σερβιτόρος και ο ταμίας πρέπει να λένε το ίδιο πράγμα για τον ίδιο άνθρωπο.
+ */
+private const val PERSON_LETTERS = "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"
+
+fun personLabel(person: Int): String =
+    if (person in PERSON_LETTERS.indices) PERSON_LETTERS[person].toString() else "#${person + 1}"
