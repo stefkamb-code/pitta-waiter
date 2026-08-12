@@ -157,8 +157,17 @@ private data class SentRound(
  * @param onFinished τελείωσε η παραγγελία ΟΛΩΝ των ατόμων — βγαίνει τέρμα έξω, στην αρχική με τα
  *   τραπέζια. Ο σερβιτόρος έχει τελειώσει με αυτό το τραπέζι και το επόμενο πράγμα που θέλει είναι
  *   η κάτοψη, όχι η καρτέλα του τραπεζιού που μόλις έκλεισε.
+ * @param startPerson σε ΠΟΙΟΝ ανοίγει η οθόνη (0-based) — από το «ΠΡΟΣΘΗΚΗ ΣΕ ΑΥΤΟΝ» της καρτέλας του
+ *   τραπεζιού, όταν κάποιος που έχει ήδη παραγγείλει ζητήσει κάτι ακόμα. -1 = όπως πάντα, στον πρώτο
+ *   που δεν έχει παραγγείλει.
  */
-fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit, onFinished: () -> Unit) {
+fun MenuScreen(
+    prefs: AppPrefs,
+    table: Int,
+    onDone: () -> Unit,
+    onFinished: () -> Unit,
+    startPerson: Int = -1,
+) {
     val scope = rememberCoroutineScope()
     var categories by remember { mutableStateOf<List<MenuCategoryDto>>(emptyList()) }
     var customizerOptions by remember { mutableStateOf<CustomizerOptionsDto?>(null) }
@@ -192,6 +201,10 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit, onFinished: () -
     /// Ποια άτομα έχουν ήδη παραγγείλει — ώστε το «επόμενο» να μην ξαναπάει σε κάποιον που τελείωσε,
     /// ακόμα κι αν ο σερβιτόρος γύρισε ενδιάμεσα πίσω σε αυτόν επειδή άλλαξε γνώμη.
     val personsDone = remember { mutableStateListOf<Int>() }
+    /// Ποια άτομα είχαν ήδη παραγγελία ΠΡΙΝ ανοίξει αυτή η οθόνη. Φαίνονται στη λίστα ακόμα κι όταν
+    /// δεν τους έχει γραφτεί τίποτα τώρα — αλλιώς, σε τραπέζι που έχει ήδη παραγγείλει, δεν υπήρχε
+    /// τρόπος να πας στον Β όταν ζητήσει κάτι επιπλέον.
+    val personsOrderedBefore = remember { mutableStateListOf<Int>() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -214,7 +227,10 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit, onFinished: () -
             if (personCount > 1) {
                 val already = api.getTableOrders(table).flatMap { it.lines }.mapNotNull { it.person }.distinct()
                 personsDone.addAll(already)
-                person = (0 until personCount).firstOrNull { it !in already } ?: 0
+                personsOrderedBefore.addAll(already)
+                // Αν ήρθαμε από το «ΠΡΟΣΘΗΚΗ ΣΕ ΑΥΤΟΝ», γράφουμε σε ΑΥΤΟΝ — όχι στον πρώτο ελεύθερο.
+                person = if (startPerson in 0 until personCount) startPerson
+                else (0 until personCount).firstOrNull { it !in already } ?: 0
             }
         } catch (e: Exception) {
             error = "Δεν φορτώθηκε το μενού — έλεγξε τη σύνδεση"
@@ -229,8 +245,15 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit, onFinished: () -
     val lastPerson = !splitting || remainingPersons.isEmpty()
     // Τα ΑΛΛΑ άτομα του τραπεζιού (το τρέχον φαίνεται ζωντανό στο καλάθι), χωρισμένα σε «πριν» και
     // «μετά» ώστε η σειρά να μένει πάντα Α, Β, Γ, Δ όταν γυρνάς σε κάποιον — να μην «κατεβαίνει» κάτω.
-    val personsBefore = sentPersons.filter { it.person < person }.sortedBy { it.person }
-    val personsAfter = sentPersons.filter { it.person > person }.sortedBy { it.person }
+    // Μαζί και όσοι είχαν παραγγείλει σε προηγούμενο γύρο: εμφανίζονται χωρίς γραμμές, μόνο για να
+    // πατηθούν. ΔΕΝ μπαίνουν στο sentPersons — εκείνο είναι τα καλάθια που θα σταλούν (βλ. submit).
+    val personBlocks = (sentPersons.map { it.person } + personsOrderedBefore)
+        .distinct()
+        .filter { it != person }
+        .sorted()
+        .map { p -> sentPersons.firstOrNull { it.person == p } ?: SentRound(p, 0.0, emptyList()) }
+    val personsBefore = personBlocks.filter { it.person < person }
+    val personsAfter = personBlocks.filter { it.person > person }
     val otherPersons = personsBefore + personsAfter
 
     /** Φυλάει στην άκρη το καλάθι του ατόμου που γράφεται τώρα, ΧΩΡΙΣ να το στέλνει. Άδειο καλάθι =
@@ -473,7 +496,10 @@ fun MenuScreen(prefs: AppPrefs, table: Int, onDone: () -> Unit, onFinished: () -
                         if (otherPersons.isNotEmpty()) {
                             Text(
                                 otherPersons.joinToString("  ·  ") { r ->
-                                    String.format(Locale.getDefault(), "%s %.2f€", personLabel(r.person), r.total)
+                                    // Χωρίς γραμμές = δεν του γράφτηκε κάτι τώρα, έχει όμως παραγγείλει
+                                    // πριν: μόνο το γράμμα του, ώστε να μη διαβαστεί σαν «πήρε 0,00 €».
+                                    if (r.lines.isEmpty()) personLabel(r.person)
+                                    else String.format(Locale.getDefault(), "%s %.2f€", personLabel(r.person), r.total)
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.ExtraBold,
@@ -1309,13 +1335,14 @@ private fun PersonDraftBlock(round: SentRound, onSelectPerson: (Int) -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
-            "ΑΤΟΜΟ ${personLabel(round.person)}  ✎",
+            // ✎ = του γράφεις τώρα, + = έχει παραγγείλει πριν και δέχεται κι άλλα. Και τα δύο πατιούνται.
+            "ΑΤΟΜΟ ${personLabel(round.person)}  ${if (round.lines.isEmpty()) "+" else "✎"}",
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.ExtraBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            String.format(Locale.getDefault(), "%.2f€", round.total),
+            if (round.lines.isEmpty()) "" else String.format(Locale.getDefault(), "%.2f€", round.total),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.ExtraBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

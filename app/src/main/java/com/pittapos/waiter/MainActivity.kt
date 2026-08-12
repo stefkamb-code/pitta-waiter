@@ -82,18 +82,24 @@ class MainActivity : ComponentActivity() {
                             TableDetailScreen(
                                 prefs = prefs,
                                 table = table,
-                                onAddMore = { safeNavigate("menu/$table") },
+                                // person = σε ποιον γράφεται· -1 = «στον πρώτο που δεν παρήγγειλε»,
+                                // δηλαδή ό,τι έκανε πάντα το ΠΡΟΣΘΗΚΗ ΑΤΟΜΟΥ.
+                                onAddMore = { person -> safeNavigate("menu/$table?person=$person") },
                                 onBack = { safeBack() },
                             )
                         }
                         composable(
-                            "menu/{table}",
-                            arguments = listOf(navArgument("table") { type = NavType.IntType }),
+                            "menu/{table}?person={person}",
+                            arguments = listOf(
+                                navArgument("table") { type = NavType.IntType },
+                                navArgument("person") { type = NavType.IntType; defaultValue = -1 },
+                            ),
                         ) { backStackEntry ->
                             val table = backStackEntry.arguments?.getInt("table") ?: 1
                             MenuScreen(
                                 prefs = prefs,
                                 table = table,
+                                startPerson = backStackEntry.arguments?.getInt("person") ?: -1,
                                 onDone = { safeBack() },
                                 // Τέλος παραγγελίας για όλα τα άτομα: πίσω στην αρχική με τα τραπέζια,
                                 // όχι στην καρτέλα του τραπεζιού — ο σερβιτόρος πάει στο επόμενο τραπέζι.

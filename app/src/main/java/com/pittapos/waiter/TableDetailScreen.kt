@@ -31,7 +31,7 @@ private typealias LineKey = Pair<Int, Int>
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack: () -> Unit) {
+fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var orders by remember { mutableStateOf<List<TableOrderDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -154,7 +154,7 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
                 ExtendedFloatingActionButton(
                     onClick = {
                         if (!splitting) {
-                            onAddMore()
+                            onAddMore(-1)
                             return@ExtendedFloatingActionButton
                         }
                         scope.launch {
@@ -165,7 +165,7 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
                             } catch (e: Exception) {
                                 // Χωρίς δίκτυο δεν μπλοκάρουμε — μπαίνει στο μενού κανονικά.
                             }
-                            onAddMore()
+                            onAddMore(-1)
                         }
                     },
                     icon = { Icon(Icons.Default.Add, null) },
@@ -234,6 +234,9 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: () -> Unit, onBack
                                     entries = entries,
                                     isSelected = { o, line -> (o.orderNumber to line.lineIndex) in selected },
                                     onToggle = { o, line -> toggleSelect(o, line) },
+                                    // «Το ΑΤΟΜΟ Β θέλει και μια κόκα κόλα»: γράφεται στη ΔΙΚΗ του
+                                    // απόδειξη. Τα ΑΧΡΕΩΤΑ δεν είναι άτομο, δεν έχουν κουμπί.
+                                    onAddMore = person?.let { p -> { onAddMore(p) } },
                                 )
                             }
                         } else {
@@ -312,6 +315,7 @@ private fun PersonCard(
     entries: List<Pair<TableOrderDto, TableOrderLineDto>>,
     isSelected: (TableOrderDto, TableOrderLineDto) -> Boolean,
     onToggle: (TableOrderDto, TableOrderLineDto) -> Unit,
+    onAddMore: (() -> Unit)? = null,
 ) {
     val outstanding = entries.filter { !it.second.isSettled }.sumOf { it.second.revenue }
     Card(
@@ -341,6 +345,14 @@ private fun PersonCard(
             entries.forEachIndexed { index, (order, line) ->
                 if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 OrderLineRow(line, selected = isSelected(order, line)) { onToggle(order, line) }
+            }
+            if (onAddMore != null) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                TextButton(onClick = onAddMore, modifier = Modifier.padding(start = 8.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("ΠΡΟΣΘΗΚΗ ΣΕ ΑΥΤΟΝ", fontWeight = FontWeight.ExtraBold)
+                }
             }
         }
     }
