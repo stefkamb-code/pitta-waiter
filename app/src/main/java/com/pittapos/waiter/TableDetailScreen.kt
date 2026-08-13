@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -38,6 +39,9 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onB
     var error by remember { mutableStateOf<String?>(null) }
     val selected = remember { mutableStateListOf<LineKey>() }
     var pendingCloseTable by remember { mutableStateOf(false) }
+    // Ποιες γραμμές περιμένουν να δηλωθεί ΠΩΣ πληρώθηκαν. Ο σερβιτόρος πατάει πρώτα «πληρωμένο» και το
+    // μετρητά/κάρτα ρωτιέται μετά — τα δύο κουμπιά μπροστά γέμιζαν την οθόνη σε κάθε άτομο.
+    var pendingSettle by remember { mutableStateOf<List<LineKey>?>(null) }
     var closing by remember { mutableStateOf(false) }
     var settling by remember { mutableStateOf(false) }
     val snackbarHost = remember { SnackbarHostState() }
@@ -72,8 +76,9 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onB
         if (key in selected) selected.remove(key) else selected.add(key)
     }
 
-    fun settleSelected() {
-        val keys = selected.toList()
+    /** Σημειώνει πληρωμένες τις γραμμές — με ΤΟΝ ΤΡΟΠΟ που διάλεξε ο σερβιτόρος, όπως στο ταμείο. */
+    fun settleLines(keys: List<LineKey>, method: String) {
+        pendingSettle = null
         if (keys.isEmpty() || settling) return
         scope.launch {
             settling = true
@@ -82,7 +87,7 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onB
                 var pinError = false
                 var otherError = false
                 for ((orderNumber, lineIndex) in keys) {
-                    val response = api.settleLine(table, SettleLineRequest(prefs.pin, orderNumber, lineIndex))
+                    val response = api.settleLine(table, SettleLineRequest(prefs.pin, orderNumber, lineIndex, method))
                     if (!response.isSuccessful) {
                         if (response.code() == 401) pinError = true else otherError = true
                         break
@@ -100,32 +105,46 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onB
         }
     }
 
+    /** Κλείνει το τραπέζι· ό,τι έμεινε απλήρωτο καταγράφεται ως πληρωμένο με αυτόν τον τρόπο. */
+    fun closeTableWith(method: String) {
+        pendingCloseTable = false
+        scope.launch {
+            closing = true
+            try {
+                val response = ApiClient.create(prefs.serverUrl).closeTable(table, CloseTableRequest(prefs.pin, method))
+                if (response.isSuccessful) onBack()
+                else snackbarHost.showSnackbar(
+                    if (response.code() == 401) "Λάθος PIN — άλλαξέ το στις ρυθμίσεις" else "Απέτυχε η πληρωμή",
+                )
+            } catch (e: Exception) {
+                snackbarHost.showSnackbar("Αποτυχία σύνδεσης")
+            } finally {
+                closing = false
+            }
+        }
+    }
+
+    // «Πληρώθηκε» → ΤΩΡΑ ρωτάμε πώς, σε παραθυράκι στη ΜΕΣΗ της οθόνης: εκεί κοιτάει ο σερβιτόρος μόλις
+    // πατήσει, ενώ στην κάτω μπάρα έπρεπε να κατεβάσει το μάτι του στη γωνία.
+    pendingSettle?.let { keys ->
+        PaymentMethodDialog(
+            title = "ΠΩΣ ΠΛΗΡΩΘΗΚΕ;",
+            amount = selectedTotal,
+            enabled = !settling,
+            onCash = { settleLines(keys, PaymentMethod.CASH) },
+            onCard = { settleLines(keys, PaymentMethod.CARD) },
+            onCancel = { pendingSettle = null },
+        )
+    }
+
     if (pendingCloseTable) {
-        AlertDialog(
-            onDismissRequest = { pendingCloseTable = false },
-            title = { Text("Πληρωμή τραπεζιού") },
-            text = { Text("Να κλείσει όλο το τραπέζι $table; Θα ελευθερωθεί για νέους πελάτες.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingCloseTable = false
-                    scope.launch {
-                        closing = true
-                        try {
-                            val response = ApiClient.create(prefs.serverUrl).closeTable(table, CloseTableRequest(prefs.pin))
-                            if (response.isSuccessful) onBack()
-                            else snackbarHost.showSnackbar(
-                                if (response.code() == 401) "Λάθος PIN — άλλαξέ το στις ρυθμίσεις" else "Απέτυχε η πληρωμή",
-                            )
-                        } catch (e: Exception) {
-                            snackbarHost.showSnackbar("Αποτυχία σύνδεσης")
-                        } finally {
-                            closing = false
-                        }
-                    }
-                }) { Text("Ναι, πληρώθηκε") }
-            },
-            dismissButton = { TextButton(onClick = { pendingCloseTable = false }) { Text("Άκυρο") } },
-            shape = MaterialTheme.shapes.large,
+        PaymentMethodDialog(
+            title = "ΠΩΣ ΠΛΗΡΩΘΗΚΕ ΤΟ ΥΠΟΛΟΙΠΟ;",
+            amount = outstanding,
+            enabled = !closing,
+            onCash = { closeTableWith(PaymentMethod.CASH) },
+            onCard = { closeTableWith(PaymentMethod.CARD) },
+            onCancel = { pendingCloseTable = false },
         )
     }
 
@@ -176,34 +195,21 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onB
             }
         },
         bottomBar = {
-            if (selected.isNotEmpty()) {
-                Surface(shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surface) {
+            when {
+                selected.isNotEmpty() -> BottomBarSurface {
+                    // Ενικός στο ένα προϊόν: «ΠΛΗΡΩΜΕΝΑ» με ένα επιλεγμένο διαβάζεται σαν να πληρώνονται
+                    // πολλά, και ο σερβιτόρος δεύτερη φορά κοιτάει τι ακριβώς θα χρεωθεί.
+                    val one = selected.size == 1
                     Column(modifier = Modifier.fillMaxWidth().padding(20.dp, 14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Bottom,
-                        ) {
-                            Text(
-                                "${selected.size} ΕΠΙΛΕΓΜΕΝΑ",
-                                fontWeight = FontWeight.ExtraBold,
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                String.format(Locale.getDefault(), "€%.2f", selectedTotal),
-                                fontWeight = FontWeight.ExtraBold,
-                                style = MaterialTheme.typography.headlineSmall,
-                            )
-                        }
+                        BarHeader("${selected.size} " + if (one) "ΕΠΙΛΕΓΜΕΝΟ" else "ΕΠΙΛΕΓΜΕΝΑ", selectedTotal)
                         Button(
                             enabled = !settling,
-                            onClick = { settleSelected() },
+                            onClick = { pendingSettle = selected.toList() },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("✓ ΠΛΗΡΩΜΕΝΑ", fontWeight = FontWeight.Bold) }
+                        ) { Text(if (one) "✓ ΠΛΗΡΩΜΕΝΟ" else "✓ ΠΛΗΡΩΜΕΝΑ", fontWeight = FontWeight.Bold) }
                     }
                 }
-            } else if (orders.isNotEmpty()) {
-                Surface(shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surface) {
+                orders.isNotEmpty() -> BottomBarSurface {
                     OutlinedButton(
                         enabled = !closing,
                         onClick = { pendingCloseTable = true },
@@ -353,6 +359,79 @@ private fun PersonCard(
                     Spacer(Modifier.width(6.dp))
                     Text("ΠΡΟΣΘΗΚΗ ΣΕ ΑΥΤΟΝ", fontWeight = FontWeight.ExtraBold)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomBarSurface(content: @Composable () -> Unit) {
+    Surface(shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surface, content = content)
+}
+
+/** Τίτλος αριστερά, ποσό δεξιά — η κοινή κεφαλίδα κάθε κατάστασης της κάτω μπάρας. */
+@Composable
+private fun BarHeader(title: String, amount: Double) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Text(title, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+        Text(
+            String.format(Locale.getDefault(), "€%.2f", amount),
+            fontWeight = FontWeight.ExtraBold,
+            style = MaterialTheme.typography.headlineSmall,
+        )
+    }
+}
+
+/**
+ * ΜΕΤΡΗΤΑ / ΚΑΡΤΑ — τα ίδια δύο κουμπιά που έχει το ταμείο σε κάθε είσπραξη τραπεζιού.
+ *
+ * Ο τρόπος πληρωμής δηλώνεται ΤΗ ΣΤΙΓΜΗ που πληρώνεται ο καθένας, γιατί μέσα στην ίδια παρέα άλλος
+ * δίνει μετρητά κι άλλος κάρτα. Πριν, το κινητό δεν ρωτούσε καθόλου και το ταμείο κατέγραφε τα πάντα
+ * ως μετρητά — ο διαχωρισμός της αναφοράς ημέρας έβγαινε λάθος.
+ */
+@Composable
+private fun PaymentMethodDialog(
+    title: String,
+    amount: Double,
+    enabled: Boolean,
+    onCash: () -> Unit,
+    onCard: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    // Σκέτο Dialog και όχι AlertDialog: το AlertDialog έβαζε τα κουμπιά μέσα στο «κείμενό» του και
+    // έβγαιναν άχρωμα/δυσδιάκριτα — εδώ φτιάχνουμε την κάρτα μόνοι μας, με τα ίδια χρώματα του ταμείου.
+    Dialog(onDismissRequest = onCancel) {
+        Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(22.dp, 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    title,
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.titleSmall,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    String.format(Locale.getDefault(), "€%.2f", amount),
+                    fontWeight = FontWeight.ExtraBold,
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 18.dp),
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf("ΜΕΤΡΗΤΑ" to onCash, "ΚΑΡΤΑ" to onCard).forEach { (label, onClick) ->
+                        Button(
+                            onClick = onClick,
+                            enabled = enabled,
+                            modifier = Modifier.weight(1f).height(54.dp),
+                        ) { Text(label, fontWeight = FontWeight.ExtraBold, maxLines = 1) }
+                    }
+                }
+                TextButton(onClick = onCancel) { Text("ΑΚΥΡΟ", fontWeight = FontWeight.Bold) }
             }
         }
     }

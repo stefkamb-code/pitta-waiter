@@ -127,9 +127,18 @@ data class SettleLineRequest(
     val pin: String,
     val orderNumber: Int,
     val lineIndex: Int,
+    // «cash» ή «card» — ό,τι διάλεξε ο σερβιτόρος, ίδια κουμπιά με το ταμείο. Χωρίς αυτό το ταμείο
+    // κατέγραφε ΚΑΘΕ είσπραξη του κινητού ως μετρητά και ο διαχωρισμός της αναφοράς ημέρας έβγαινε λάθος.
+    val method: String = PaymentMethod.CASH,
 )
 
-data class CloseTableRequest(val pin: String)
+data class CloseTableRequest(val pin: String, val method: String = PaymentMethod.CASH)
+
+/** Πώς πληρώθηκε — οι τιμές που περιμένει το ταμείο (WaiterApiModels.SettleLineRequest.Method). */
+object PaymentMethod {
+    const val CASH = "cash"
+    const val CARD = "card"
+}
 
 /** «Πόσα άτομα;» στο άνοιγμα του τραπεζιού — ένα άτομο = μία απόδειξη στην ταμειακή. */
 data class SetPersonsRequest(val pin: String, val count: Int)
