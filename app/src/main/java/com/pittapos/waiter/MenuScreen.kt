@@ -42,6 +42,28 @@ import java.util.Locale
 // αυτόματα στο κινητό χωρίς νέο APK. Οι legacy* από κάτω μένουν ΜΟΝΟ ως εφεδρεία για ταμείο παλιότερο
 // από αυτή την έκδοση — μη γράψεις νέο όνομα κατηγορίας εκεί, θα ξανασπάσει στην επόμενη μετονομασία.
 
+/**
+ * Ξαναβάζει μια λίστα σε σειρά τέτοια ώστε, κομμένη μετά σε ζευγάρια (`chunked(2)`), να
+ * **διαβάζεται κατακόρυφα**: κάτω η αριστερή στήλη και συνέχεια από την κορυφή της δεξιάς.
+ *
+ * Οι σειρές των δύο γεμίζουν οριζόντια, οπότε μια αλφαβητική λίστα έβγαινε ζιγκ-ζαγκ — το δεύτερο
+ * όνομα καθόταν δεξιά από το πρώτο και ο σερβιτόρος πηγαινοερχόταν για να βρει υλικό. Ίδιο στρώσιμο
+ * κάνει και ο customizer του ταμείου (CustomizerViewModel.VisibleExtras), ώστε οι δύο οθόνες να
+ * δείχνουν τα ίδια πράγματα στα ίδια σημεία.
+ *
+ * Η ίδια η σειρά της λίστας δεν αλλάζει — μόνο πού πέφτει το καθένα. Περιττό πλήθος: το παραπανίσιο
+ * πάει στην ΑΡΙΣΤΕΡΗ στήλη, άρα άδειο μένει μόνο το τελευταίο κελί κάτω δεξιά.
+ */
+private fun <T> inTwoColumns(items: List<T>): List<T> {
+    val leftColumn = (items.size + 1) / 2
+    val laidOut = ArrayList<T>(items.size)
+    for (row in 0 until leftColumn) {
+        laidOut.add(items[row])
+        if (leftColumn + row < items.size) laidOut.add(items[leftColumn + row])
+    }
+    return laidOut
+}
+
 private fun MenuCategoryDto.breadChoice() = hasBread ?: legacyHasBreadChoice(name)
 
 private fun MenuCategoryDto.fusesBreadIntoName() = fuseBreadIntoName ?: legacyFuseBreadIntoName(name)
@@ -1190,7 +1212,11 @@ private fun CustomizerSheet(
                 // ατέλειωτα για να φτάσει στα τελευταία. Το στέπερ μπαίνει ΚΑΤΩ από το όνομα, όχι δίπλα:
                 // στο μισό πλάτος δεν χωρούν και τα δύο, και το να μικρύνει το στέπερ θα έκανε τα κουμπιά
                 // μικρότερα από το όριο αφής — λάθος πάτημα σε ώρα αιχμής κοστίζει πιο πολύ από το σκρολ.
-                items(extras.chunked(2)) { pair ->
+                //
+                // Η ΣΕΙΡΑ των έξτρα είναι του ταμείου (βλ. product.extras παραπάνω) — πρώτες οι Πατάτες
+                // και μετά αλφαβητικά. Το inTwoColumns φροντίζει μόνο να διαβάζεται όπως στο ταμείο:
+                // κάτω η αριστερή στήλη και συνέχεια από την κορυφή της δεξιάς.
+                items(inTwoColumns(extras).chunked(2)) { pair ->
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                         pair.forEach { extra ->
                             val qty = extraQty[extra.name] ?: 0
