@@ -41,6 +41,9 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     // Ποιο τραπέζι μόλις άνοιξε ο σερβιτόρος και περιμένει την απάντηση «πόσα άτομα;».
     var askPersonsFor by remember { mutableStateOf<Int?>(null) }
+    // Η βάρδια ΤΟΥ ΤΑΜΕΙΟΥ — διαβασμένη από εκεί, όχι βγαλμένη από την ώρα του κινητού. null = ταμείο
+    // παλιότερης έκδοσης χωρίς το endpoint, οπότε η κεφαλίδα μένει όπως ήταν πάντα.
+    var eveningShift by remember { mutableStateOf<Boolean?>(null) }
     val snackbarHost = remember { SnackbarHostState() }
 
     suspend fun load() {
@@ -61,6 +64,22 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 load()
+                delay(4000)
+            }
+        }
+    }
+
+    // Η βάρδια σε ΞΕΧΩΡΙΣΤΟ βρόχο από τα τραπέζια, στον ίδιο όμως ρυθμό: μια αργή ή ανύπαρκτη
+    // απάντηση (παλιό ταμείο, 404) δεν καθυστερεί έτσι ποτέ την κάτοψη, αλλά η ένδειξη προλαβαίνει
+    // την αλλαγή του διακόπτη. Πιο αραιά (15") φαινόταν να «αργεί να το διαβάσει».
+    LaunchedEffect(serverUrl, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                eveningShift = try {
+                    ApiClient.create(serverUrl).getShift().isEveningShift
+                } catch (e: Exception) {
+                    null
+                }
                 delay(4000)
             }
         }
@@ -105,9 +124,13 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
                     Column {
                         Text("ΤΡΑΠΕΖΙΑ", fontWeight = FontWeight.ExtraBold)
                         if (!loading && error == null) {
+                            // Η βάρδια μπροστά: είναι η πληροφορία που δεν φαινόταν πουθενά και έστελνε
+                            // παραγγελίες σε λάθος μεριά της ημέρας.
+                            val tablesLabel = if (openCount == 0) "όλα ελεύθερα" else "$openCount ανοιχτά"
                             Text(
-                                if (openCount == 0) "όλα ελεύθερα" else "$openCount ανοιχτά",
+                                eveningShift?.let { "${shiftLabel(it)}  ·  $tablesLabel" } ?: tablesLabel,
                                 style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }

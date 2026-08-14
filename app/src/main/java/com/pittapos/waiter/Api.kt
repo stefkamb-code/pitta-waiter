@@ -22,6 +22,16 @@ data class TableDto(
     val persons: Int = 0,
 )
 
+/**
+ * Ποια βάρδια τρέχει στο ταμείο. Το κινητό ΔΕΝ την υπολογίζει από την ώρα του — ο διακόπτης στο ταμείο
+ * είναι χειροκίνητος και η παραγγελία σφραγίζεται με ό,τι βρει εκεί όταν φτάσει. Ταμείο παλιότερης
+ * έκδοσης δεν έχει καθόλου αυτό το endpoint (404) και τότε η βάρδια απλώς δεν δείχνεται πουθενά.
+ */
+data class ShiftDto(val isEveningShift: Boolean = false)
+
+/** Όπως τα κουμπιά της κεφαλίδας του ταμείου — ίδιες λέξεις, να μη λέει αλλιώς η κάθε οθόνη. */
+fun shiftLabel(isEveningShift: Boolean): String = if (isEveningShift) "🌙 ΒΡΑΔΙΝΗ" else "☀ ΠΡΩΙΝΗ"
+
 data class MenuProductDto(
     val id: String,
     val name: String,
@@ -152,6 +162,9 @@ interface PittaApi {
 
     @GET("api/menu")
     suspend fun getMenu(): List<MenuCategoryDto>
+
+    @GET("api/shift")
+    suspend fun getShift(): ShiftDto
 
     @GET("api/customizer-options")
     suspend fun getCustomizerOptions(): CustomizerOptionsDto

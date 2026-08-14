@@ -29,6 +29,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -205,6 +209,9 @@ fun MenuScreen(
     /// δεν τους έχει γραφτεί τίποτα τώρα — αλλιώς, σε τραπέζι που έχει ήδη παραγγείλει, δεν υπήρχε
     /// τρόπος να πας στον Β όταν ζητήσει κάτι επιπλέον.
     val personsOrderedBefore = remember { mutableStateListOf<Int>() }
+    /// Η βάρδια του ΤΑΜΕΙΟΥ, μόνο για να φαίνεται στην κεφαλίδα. null = ταμείο παλιότερης έκδοσης ή
+    /// δεν απάντησε ακόμα — τότε δεν δείχνεται τίποτα. Δεν μπαίνει ποτέ στον δρόμο της παραγγελίας.
+    var eveningShift by remember { mutableStateOf<Boolean?>(null) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -236,6 +243,27 @@ fun MenuScreen(
             error = "Δεν φορτώθηκε το μενού — έλεγξε τη σύνδεση"
         }
         loading = false
+    }
+
+    // Η βάρδια σε ΔΙΚΟ ΤΗΣ coroutine, όχι μέσα στη φόρτωση του μενού: είναι σκέτη ένδειξη και δεν
+    // επιτρέπεται να καθυστερήσει ούτε το άνοιγμα της οθόνης ούτε την παραγγελία. Αν το ταμείο είναι
+    // παλιότερο (404) ή αργήσει, μένει null και απλώς δεν γράφεται τίποτα στην κεφαλίδα.
+    //
+    // Ξαναρωτάει όσο η οθόνη είναι ανοιχτή, όχι μόνο μία φορά στο άνοιγμα: ένα τραπέζι γράφεται σε
+    // αρκετά λεπτά και ο ταμίας μπορεί να γυρίσει τον διακόπτη στο μεταξύ — η κεφαλίδα θα έδειχνε
+    // μέχρι το τέλος την παλιά βάρδια.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                eveningShift = try {
+                    ApiClient.create(prefs.serverUrl).getShift().isEveningShift
+                } catch (e: Exception) {
+                    null
+                }
+                delay(4000)
+            }
+        }
     }
 
     val total = cartLines.sumOf { it.unitPrice * it.quantity }
@@ -338,6 +366,46 @@ fun MenuScreen(
         } finally {
             sending = false
         }
+    }
+
+    /** Τραπέζι που πληρώνει μαζί: ένα καλάθι, μία παραγγελία, φεύγει αμέσως. */
+    suspend fun submitSingle() {
+        sending = true
+        val lines = cartLines.map { l ->
+            OrderLineRequest(
+                l.productId, l.quantity, l.bread, l.removedIngredients,
+                l.extras, l.note, l.doublePita, person = null,
+            )
+        }
+        try {
+            val response = ApiClient.create(prefs.serverUrl).submitOrder(
+                SubmitOrderRequest(
+                    table = table, pin = prefs.pin, lines = lines,
+                    note = orderNote.trim().ifEmpty { null },
+                    printNow = true,
+                ),
+            )
+            if (response.isSuccessful) {
+                onFinished()
+            } else {
+                snackbarHost.showSnackbar(
+                    if (response.code() == 401) "Λάθος PIN — άλλαξέ το στις ρυθμίσεις"
+                    else "Η παραγγελία απορρίφθηκε",
+                )
+            }
+        } catch (e: Exception) {
+            snackbarHost.showSnackbar("Αποτυχία αποστολής — έλεγξε τη σύνδεση")
+        } finally {
+            sending = false
+        }
+    }
+
+    /**
+     * Το ΕΝΑ σημείο απ' όπου φεύγει παραγγελία, με άτομα ή χωρίς — ώστε ο έλεγχος βάρδιας παρακάτω να
+     * μη χρειάζεται να γραφτεί δύο φορές (και να μην ξεχαστεί στη μία από τις δύο).
+     */
+    suspend fun sendEverything() {
+        if (splitting) submitAll() else submitSingle()
     }
 
     /**
@@ -466,9 +534,16 @@ fun MenuScreen(
                         // Σε μελάνι, όχι στο κόκκινο της μάρκας: το κόκκινο μένει για ΤΟ κουμπί που
                         // κλείνει την παραγγελία. Με άτομα, μισή οθόνη γινόταν κόκκινη και τραβούσε
                         // το μάτι σε πληροφορία που απλώς ενημερώνει.
-                        if (splitting) {
+                        // Μπροστά μπαίνει η βάρδια του ταμείου, στην ίδια γραμμή: είναι η μία
+                        // πληροφορία που δεν φαινόταν πουθενά στο κινητό, και όποια παραγγελία γράφεται
+                        // τώρα εκεί θα καταχωρηθεί.
+                        val personLine = if (splitting)
+                            "ΑΤΟΜΟ ${personLabel(person)}  ·  ${person + 1} από $personCount" else null
+                        val subtitle = listOfNotNull(eveningShift?.let { shiftLabel(it) }, personLine)
+                            .joinToString("  ·  ")
+                        if (subtitle.isNotEmpty()) {
                             Text(
-                                "ΑΤΟΜΟ ${personLabel(person)}  ·  ${person + 1} από $personCount",
+                                subtitle,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -594,7 +669,7 @@ fun MenuScreen(
                                         onFinished()
                                         return@Button
                                     }
-                                    scope.launch { submitAll() }
+                                    scope.launch { sendEverything() }
                                     return@Button
                                 }
 
@@ -603,36 +678,7 @@ fun MenuScreen(
                                     onFinished()
                                     return@Button
                                 }
-                                scope.launch {
-                                    sending = true
-                                    val lines = cartLines.map { l ->
-                                        OrderLineRequest(
-                                            l.productId, l.quantity, l.bread, l.removedIngredients,
-                                            l.extras, l.note, l.doublePita, person = null,
-                                        )
-                                    }
-                                    try {
-                                        val response = ApiClient.create(prefs.serverUrl).submitOrder(
-                                            SubmitOrderRequest(
-                                                table = table, pin = prefs.pin, lines = lines,
-                                                note = orderNote.trim().ifEmpty { null },
-                                                printNow = true,
-                                            ),
-                                        )
-                                        if (response.isSuccessful) {
-                                            onFinished()
-                                        } else {
-                                            snackbarHost.showSnackbar(
-                                                if (response.code() == 401) "Λάθος PIN — άλλαξέ το στις ρυθμίσεις"
-                                                else "Η παραγγελία απορρίφθηκε",
-                                            )
-                                        }
-                                    } catch (e: Exception) {
-                                        snackbarHost.showSnackbar("Αποτυχία αποστολής — έλεγξε τη σύνδεση")
-                                    } finally {
-                                        sending = false
-                                    }
-                                }
+                                scope.launch { sendEverything() }
                             },
                         ) {
                             Text(
