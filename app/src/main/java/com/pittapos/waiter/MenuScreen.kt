@@ -132,18 +132,16 @@ private fun composeDoublePitaName(
     return "ΜΙΝΙ ΔΙΠΛΗ ΠΙΤΑ " + rest
 }
 
-/** Ίδιο κατώφλι με το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients) — 3+ αφαιρέσεις γίνονται
- * «μόνο με:» + ένα υλικό ανά γραμμή αντί για μακριά λίστα «χωρίς Χ · χωρίς Υ». */
+/** Ακριβώς ό,τι γράφει και το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients): πάντα «χωρίς:» με τα
+ * υλικά που ξετσεκαρίστηκαν από κάτω, και ΣΚΕΤΟ μόνο αν αφαιρέθηκαν όλα. Υπήρχε και εδώ ο κανόνας που
+ * από 3 αφαιρέσεις και πάνω γύριζε τη γραμμή ανάποδα («μόνο με: αλάτι, πιπέρι») — έφυγε, γιατί ο
+ * σερβιτόρος πατούσε τρία «χωρίς» και έβλεπε κάτι εντελώς άλλο. */
 private fun describeRemovedIngredients(removed: List<String>, allIngredients: List<String>): List<String> {
     if (removed.isEmpty()) return emptyList()
     // Το isNotEmpty() είναι ο ίδιος φύλακας με το ταμείο: προϊόν χωρίς βασικά υλικά δεν γίνεται «σκέτο»
     // από ξεμαρκαρίσματα που κουβαλήθηκαν από αλλού — αλλιώς οι δύο πλευρές τύπωναν διαφορετικά.
     if (allIngredients.isNotEmpty() && removed.size >= allIngredients.size) return listOf("σκέτο")
-    if (removed.size >= 3) {
-        val remaining = allIngredients.filter { it !in removed }.map { it.replaceFirstChar(Char::lowercaseChar) }
-        return listOf("μόνο με:") + remaining
-    }
-    return removed.map { "χωρίς " + it.replaceFirstChar(Char::lowercaseChar) }
+    return listOf("χωρίς:") + removed.map { it.replaceFirstChar(Char::lowercaseChar) }
 }
 
 /** Μία γραμμή προς αποστολή· τα customization πεδία μένουν null για απλά προϊόντα χωρίς customizer. */
