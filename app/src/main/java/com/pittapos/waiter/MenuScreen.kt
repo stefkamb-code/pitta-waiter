@@ -133,9 +133,9 @@ private fun composeDoublePitaName(
 }
 
 /** Ακριβώς ό,τι γράφει και το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients): ο κανόνας είναι πόσα
- * ΜΕΝΟΥΝ — «χωρίς:» σχεδόν πάντα, «μόνο με:» μόνο όταν μένουν το πολύ δύο υλικά, ΣΚΕΤΟ αν δεν μένει
- * κανένα. Με τρία υπόλοιπα γράφεται «χωρίς:» (ρητή απαίτηση του ταμείου). */
-private const val MONO_ME_MAX_REMAINING = 2
+ * ΜΕΝΟΥΝ — «χωρίς:» σχεδόν πάντα, «μόνο με:» όταν μένουν το πολύ ΤΡΙΑ υλικά και έχουν
+ * ξετσεκαριστεί τουλάχιστον δύο, ΣΚΕΤΟ αν δεν μένει κανένα. Το όριο των τριών το έδωσε ρητά ο ταμίας. */
+private const val MONO_ME_MAX_REMAINING = 3
 
 private fun describeRemovedIngredients(removed: List<String>, allIngredients: List<String>): List<String> {
     if (removed.isEmpty()) return emptyList()
@@ -143,7 +143,7 @@ private fun describeRemovedIngredients(removed: List<String>, allIngredients: Li
     // από ξεμαρκαρίσματα που κουβαλήθηκαν από αλλού — αλλιώς οι δύο πλευρές τύπωναν διαφορετικά.
     if (allIngredients.isNotEmpty() && removed.size >= allIngredients.size) return listOf("σκέτο")
     val remaining = allIngredients.filter { it !in removed }
-    if (allIngredients.isNotEmpty() && remaining.size <= MONO_ME_MAX_REMAINING && removed.size > remaining.size)
+    if (allIngredients.isNotEmpty() && remaining.size <= MONO_ME_MAX_REMAINING && removed.size >= 2)
         return listOf("μόνο με:") + remaining.map { it.replaceFirstChar(Char::lowercaseChar) }
     return listOf("χωρίς:") + removed.map { it.replaceFirstChar(Char::lowercaseChar) }
 }
