@@ -132,17 +132,18 @@ private fun composeDoublePitaName(
     return "ΜΙΝΙ ΔΙΠΛΗ ΠΙΤΑ " + rest
 }
 
-/** Ακριβώς ό,τι γράφει και το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients): όποια από τις δύο
- * λίστες είναι η πιο σύντομη — «χωρίς:» όσο τα αφαιρεμένα είναι λιγότερα ή ίσα με όσα μένουν, «μόνο με:»
- * μόλις τα ξεπεράσουν, ΣΚΕΤΟ αν αφαιρέθηκαν όλα. Το παλιό σταθερό κατώφλι («από 3 και πάνω γύρνα το
- * ανάποδα») χτυπούσε στις σαλάτες, όπου τρία «χωρίς» σε επτά υλικά είναι καθημερινό αίτημα. */
+/** Ακριβώς ό,τι γράφει και το ταμείο (βλ. MenuSeed.DescribeRemovedIngredients): ο κανόνας είναι πόσα
+ * ΜΕΝΟΥΝ — «χωρίς:» σχεδόν πάντα, «μόνο με:» μόνο όταν μένουν το πολύ δύο υλικά, ΣΚΕΤΟ αν δεν μένει
+ * κανένα. Με τρία υπόλοιπα γράφεται «χωρίς:» (ρητή απαίτηση του ταμείου). */
+private const val MONO_ME_MAX_REMAINING = 2
+
 private fun describeRemovedIngredients(removed: List<String>, allIngredients: List<String>): List<String> {
     if (removed.isEmpty()) return emptyList()
     // Το isNotEmpty() είναι ο ίδιος φύλακας με το ταμείο: προϊόν χωρίς βασικά υλικά δεν γίνεται «σκέτο»
     // από ξεμαρκαρίσματα που κουβαλήθηκαν από αλλού — αλλιώς οι δύο πλευρές τύπωναν διαφορετικά.
     if (allIngredients.isNotEmpty() && removed.size >= allIngredients.size) return listOf("σκέτο")
     val remaining = allIngredients.filter { it !in removed }
-    if (allIngredients.isNotEmpty() && removed.size > remaining.size)
+    if (allIngredients.isNotEmpty() && remaining.size <= MONO_ME_MAX_REMAINING && removed.size > remaining.size)
         return listOf("μόνο με:") + remaining.map { it.replaceFirstChar(Char::lowercaseChar) }
     return listOf("χωρίς:") + removed.map { it.replaceFirstChar(Char::lowercaseChar) }
 }
