@@ -7,6 +7,7 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 
@@ -106,6 +107,9 @@ data class SubmitOrderRequest(
     // ψήστης να πάρει ΕΝΑ χαρτί με όλο το τραπέζι αντί για ένα ανά άτομο. Οι παραγγελίες καταχωρούνται
     // κανονικά μία-μία — μία απόδειξη ανά άτομο.
     val printNow: Boolean = true,
+    // Ίδιος σε κάθε ξαναπάτημα της ίδιας παραγγελίας: αν η πρώτη πέρασε αλλά η απάντηση χάθηκε, το ταμείο
+    // (1.0.104+) απαντά «ΟΚ» χωρίς να τη γράψει και να την τυπώσει δεύτερη φορά.
+    val submissionId: String? = null,
 )
 
 data class SubmitOrderResponse(
@@ -154,20 +158,23 @@ object PaymentMethod {
 data class SetPersonsRequest(val pin: String, val count: Int)
 
 interface PittaApi {
+    // Ο κωδικός ταξιδεύει ΚΑΙ στα GET, όχι μόνο στις εγγραφές: αλλιώς ένα κινητό με παλιό ή λάθος
+    // κωδικό άνοιγε κανονικά, έβλεπε τραπέζια και κατάλογο, και κοβόταν μόνο στην ΑΠΟΣΤΟΛΗ — έμοιαζε
+    // σαν να δουλεύει ακόμα ο παλιός κωδικός.
     @GET("api/tables")
-    suspend fun getTables(): List<TableDto>
+    suspend fun getTables(@Query("pin") pin: String): List<TableDto>
 
     @GET("api/tables/{table}/orders")
-    suspend fun getTableOrders(@Path("table") table: Int): List<TableOrderDto>
+    suspend fun getTableOrders(@Path("table") table: Int, @Query("pin") pin: String): List<TableOrderDto>
 
     @GET("api/menu")
-    suspend fun getMenu(): List<MenuCategoryDto>
+    suspend fun getMenu(@Query("pin") pin: String): List<MenuCategoryDto>
 
     @GET("api/shift")
-    suspend fun getShift(): ShiftDto
+    suspend fun getShift(@Query("pin") pin: String): ShiftDto
 
     @GET("api/customizer-options")
-    suspend fun getCustomizerOptions(): CustomizerOptionsDto
+    suspend fun getCustomizerOptions(@Query("pin") pin: String): CustomizerOptionsDto
 
     @POST("api/orders")
     suspend fun submitOrder(@Body request: SubmitOrderRequest): Response<SubmitOrderResponse>

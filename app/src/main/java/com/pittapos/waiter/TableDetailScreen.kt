@@ -48,7 +48,7 @@ fun TableDetailScreen(prefs: AppPrefs, table: Int, onAddMore: (Int) -> Unit, onB
 
     suspend fun load() {
         try {
-            orders = ApiClient.create(prefs.serverUrl).getTableOrders(table)
+            orders = ApiClient.create(prefs.serverUrl).getTableOrders(table, prefs.pin)
             error = null
         } catch (e: Exception) {
             error = "Δεν φορτώθηκαν οι παραγγελίες — έλεγξε τη σύνδεση"

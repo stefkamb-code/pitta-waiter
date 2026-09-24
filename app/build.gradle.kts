@@ -11,8 +11,8 @@ android {
         applicationId = "com.pittapos.waiter"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20
-        versionName = "2.9"
+        versionCode = 23
+        versionName = "3.2"
     }
 
     // Η release υπογράφεται με ΤΟ ΙΔΙΟ κλειδί που έβγαζε μέχρι τώρα η debug (το debug.keystore του

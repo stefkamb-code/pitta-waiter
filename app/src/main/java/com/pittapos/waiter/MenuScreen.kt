@@ -29,12 +29,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.UUID
 
 // ── Κανόνες κατηγορίας ────────────────────────────────────────────────────────────────────────────
 // Πηγή είναι ΤΟ ΤΑΜΕΙΟ: κάθε κατηγορία κουβαλάει τους κανόνες της στο /api/menu, οπότε ό,τι αλλάζει ο
@@ -202,6 +204,9 @@ fun MenuScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var sending by remember { mutableStateOf(false) }
+    // Αριθμός αποστολής ανά καλάθι («single» ή «person-N»), μαζί με το περιεχόμενο για το οποίο φτιάχτηκε. Όσο
+    // το περιεχόμενο μένει ίδιο, κάθε ξαναπάτημα στέλνει τον ΙΔΙΟ αριθμό — βλ. submissionIdFor.
+    val submissionIds = remember { mutableMapOf<String, Pair<Int, String>>() }
     var selectedCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
     var customizingProduct by remember { mutableStateOf<MenuProductDto?>(null) }
     var customizingCategory by remember { mutableStateOf<MenuCategoryDto?>(null) }
@@ -215,6 +220,9 @@ fun MenuScreen(
     var orderNote by remember { mutableStateOf("") }
     var showOrderNote by remember { mutableStateOf(false) }
     var showCartReview by remember { mutableStateOf(false) }
+    /// Το «σίγουρα πίσω;» — βλ. leaveScreen(). Το πίσω του κινητού είναι δίπλα στα δάχτυλα και ένα
+    /// κατά λάθος πάτημα έχανε ΟΛΗ την παραγγελία του τραπεζιού που σημείωνε ο σερβιτόρος.
+    var confirmLeave by remember { mutableStateOf(false) }
     var editingLine by remember { mutableStateOf<DraftLine?>(null) }
     // Πόσα άτομα δηλώθηκαν στο άνοιγμα του τραπεζιού και σε ποιο βρισκόμαστε τώρα (0-based).
     // Ένα άτομο = μία απόδειξη = ΕΝΑΣ ΓΥΡΟΣ: γράφεις του Α, στέλνεις, και η οθόνη σε ξαναβάζει στο
@@ -239,24 +247,18 @@ fun MenuScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // Ίδια λογική με το βελάκι πίσω: μέσα σε κατηγορία γυρνά στις κατηγορίες (κρατώντας το καλάθι),
-    // μόνο από τις κατηγορίες βγαίνει στο τραπέζι — ώστε το κουμπί πίσω του κινητού να μη χάνει παραγγελία.
-    BackHandler(enabled = selectedCategory != null) {
-        selectedCategory = null
-    }
-
     LaunchedEffect(Unit) {
         try {
             val api = ApiClient.create(prefs.serverUrl)
-            categories = api.getMenu()
-            customizerOptions = api.getCustomizerOptions()
+            categories = api.getMenu(prefs.pin)
+            customizerOptions = api.getCustomizerOptions(prefs.pin)
             // Πόσα άτομα έχει το τραπέζι — αν αποτύχει, μένει 0 και η οθόνη δουλεύει όπως πάντα.
-            personCount = api.getTables().firstOrNull { it.number == table }?.persons ?: 0
+            personCount = api.getTables(prefs.pin).firstOrNull { it.number == table }?.persons ?: 0
             // Ποια άτομα έχουν ΗΔΗ παραγγείλει σε αυτό το τραπέζι — το ξέρει το ταμείο, όχι η οθόνη.
             // Έτσι, μπαίνοντας δεύτερη φορά (νέος γύρος, ή «προσθήκη ατόμου» επειδή ήρθε κι άλλος),
             // ξεκινάμε από τον πρώτο που ΔΕΝ έχει παραγγείλει, αντί να ξαναρωτάμε τον Α από την αρχή.
             if (personCount > 1) {
-                val already = api.getTableOrders(table).flatMap { it.lines }.mapNotNull { it.person }.distinct()
+                val already = api.getTableOrders(table, prefs.pin).flatMap { it.lines }.mapNotNull { it.person }.distinct()
                 personsDone.addAll(already)
                 personsOrderedBefore.addAll(already)
                 // Αν ήρθαμε από το «ΠΡΟΣΘΗΚΗ ΣΕ ΑΥΤΟΝ», γράφουμε σε ΑΥΤΟΝ — όχι στον πρώτο ελεύθερο.
@@ -281,7 +283,7 @@ fun MenuScreen(
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 eveningShift = try {
-                    ApiClient.create(prefs.serverUrl).getShift().isEveningShift
+                    ApiClient.create(prefs.serverUrl).getShift(prefs.pin).isEveningShift
                 } catch (e: Exception) {
                     null
                 }
@@ -347,6 +349,19 @@ fun MenuScreen(
      * Στέλνονται μία-μία με τη σειρά και **ό,τι φεύγει σβήνεται από τη λίστα**: αν κοπεί η σύνδεση στη
      * μέση, ξαναπατάς το κουμπί και ξαναφεύγουν μόνο όσα έμειναν — ποτέ διπλή παραγγελία.
      */
+    /**
+     * Ο αριθμός αυτής της αποστολής. Μια παραγγελία γράφτηκε και τυπώθηκε ΔΥΟ φορές στο μαγαζί (24/9/2026): αν το
+     * ταμείο αργήσει πάνω από 8″, εδώ βγαίνει «Αποτυχία αποστολής» ενώ η παραγγελία έχει ήδη περάσει, και το
+     * ξαναπάτημα την ξανάστελνε. Τώρα το ξαναπάτημα στέλνει τον ίδιο αριθμό και το ταμείο την αναγνωρίζει. Αν ο
+     * σερβιτόρος αλλάξει κάτι στο μεταξύ, είναι πια άλλη παραγγελία και παίρνει καινούριο.
+     */
+    fun submissionIdFor(key: String, content: Int): String {
+        submissionIds[key]?.let { (known, id) -> if (known == content) return id }
+        val id = UUID.randomUUID().toString()
+        submissionIds[key] = content to id
+        return id
+    }
+
     suspend fun submitAll() {
         sending = true
         try {
@@ -361,12 +376,15 @@ fun MenuScreen(
                         person = draft.person,
                     )
                 }
+                val key = "person-${draft.person}"
+                val printNow = index == drafts.lastIndex
                 val response = api.submitOrder(
                     SubmitOrderRequest(
                         table = table, pin = prefs.pin, lines = lines,
                         note = draft.note.ifEmpty { null },
                         // Δελτίο κουζίνας μόνο στην τελευταία: ένα χαρτί με όλο το τραπέζι.
-                        printNow = index == drafts.lastIndex,
+                        printNow = printNow,
+                        submissionId = submissionIdFor(key, listOf(table, lines, draft.note, printNow).hashCode()),
                     ),
                 )
                 if (!response.isSuccessful) {
@@ -377,6 +395,7 @@ fun MenuScreen(
                     return
                 }
                 sentPersons.removeAll { it.person == draft.person }
+                submissionIds.remove(key)
                 // Αν αυτό ήταν το άτομο που φαίνεται στην οθόνη, καθαρίζει και το καλάθι — αλλιώς ένα
                 // δεύτερο πάτημα (μετά από αποτυχία σε επόμενο άτομο) θα το ξανάστελνε.
                 if (draft.person == person) {
@@ -402,14 +421,17 @@ fun MenuScreen(
             )
         }
         try {
+            val note = orderNote.trim()
             val response = ApiClient.create(prefs.serverUrl).submitOrder(
                 SubmitOrderRequest(
                     table = table, pin = prefs.pin, lines = lines,
-                    note = orderNote.trim().ifEmpty { null },
+                    note = note.ifEmpty { null },
                     printNow = true,
+                    submissionId = submissionIdFor("single", listOf(table, lines, note).hashCode()),
                 ),
             )
             if (response.isSuccessful) {
+                submissionIds.remove("single")
                 onFinished()
             } else {
                 snackbarHost.showSnackbar(
@@ -449,8 +471,24 @@ fun MenuScreen(
             }
             return
         }
+        // Υπάρχει γραμμένη παραγγελία που θα χαθεί: ρωτάει πρώτα (βλ. confirmLeave). Σε άδεια οθόνη
+        // βγαίνει κατευθείαν — δεν έχει νόημα να σταθεί εμπόδιο ο σερβιτόρος που μπήκε κατά λάθος.
+        if (cartLines.isNotEmpty() || sentPersons.isNotEmpty() || personsDone.isNotEmpty()) {
+            confirmLeave = true
+            return
+        }
         onDone()
     }
+
+    // Το πίσω του κινητού περνάει ΑΚΡΙΒΩΣ από όπου περνάει και το βελάκι: μέσα σε κατηγορία γυρνά στις
+    // κατηγορίες (κρατώντας το καλάθι), αλλιώς φεύγει μέσω leaveScreen() — που πάει ένα άτομο πίσω ή
+    // ρωτάει πρώτα. Πριν ήταν ενεργό ΜΟΝΟ μέσα σε κατηγορία, οπότε από τη λίστα κατηγοριών το πίσω της
+    // συσκευής έπεφτε στον χειριστή του MainActivity και έβγαινε κατευθείαν από το τραπέζι, παρακάμπτοντας
+    // τα πάντα — ένα κατά λάθος πάτημα έσβηνε όλη την παραγγελία.
+    BackHandler {
+        if (selectedCategory != null) selectedCategory = null else leaveScreen()
+    }
+
 
     fun simpleQuantity(product: MenuProductDto): Int =
         cartLines.firstOrNull { it.key == "p:${product.id}" }?.quantity ?: 0
@@ -496,6 +534,40 @@ fun MenuScreen(
         editingLine = line
         customizingProduct = product
         customizingCategory = categories.firstOrNull { cat -> cat.products.any { it.id == line.productId } }
+    }
+
+    if (confirmLeave) {
+        // Σκέτο Dialog, ίδιο σχήμα με το παραθυράκι πληρωμής της καρτέλας τραπεζιού: κάρτα στη μέση,
+        // ΕΝΑ κουμπί ενέργειας, και από κάτω διακριτικά η επιστροφή στην παραγγελία.
+        Dialog(onDismissRequest = { confirmLeave = false }) {
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(22.dp, 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        "Σίγουρα πίσω;",
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        "Η παραγγελία του ΤΡΑΠΕΖΙΟΥ $table που σημειώνεις θα χαθεί.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 6.dp, bottom = 18.dp),
+                    )
+                    Button(
+                        onClick = { confirmLeave = false; onDone() },
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                    ) { Text("ΝΑΙ, ΠΙΣΩ", fontWeight = FontWeight.ExtraBold) }
+                    TextButton(onClick = { confirmLeave = false }) {
+                        Text("ΣΥΝΕΧΕΙΑ ΣΤΗΝ ΠΑΡΑΓΓΕΛΙΑ", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 
     if (showCartReview) {
@@ -678,6 +750,10 @@ fun MenuScreen(
                             enabled = !sending,
                             shape = MaterialTheme.shapes.medium,
                             onClick = {
+                                // Διπλό πάτημα: το «enabled = !sending» σβήνει το κουμπί μόνο στο επόμενο καρέ,
+                                // οπότε ένα γρήγορο δεύτερο πάτημα έφτανε εδώ πριν αρχίσει η πρώτη αποστολή —
+                                // δεύτερη παραγγελία. Κλειδώνει τώρα, πριν από οτιδήποτε άλλο.
+                                if (sending) return@Button
                                 // ΤΡΑΠΕΖΙ ΜΕ ΑΤΟΜΑ: εδώ δεν στέλνεται τίποτα — απλώς «κλείνει» το άτομο
                                 // και περνάμε στον επόμενο. Όλα φεύγουν μαζί στο τέλος (βλ. submitAll),
                                 // ώστε να μπορείς να γυρίσεις σε όποιον θέλει και να τον διορθώσεις.
@@ -693,6 +769,7 @@ fun MenuScreen(
                                         onFinished()
                                         return@Button
                                     }
+                                    sending = true
                                     scope.launch { sendEverything() }
                                     return@Button
                                 }
@@ -702,6 +779,7 @@ fun MenuScreen(
                                     onFinished()
                                     return@Button
                                 }
+                                sending = true
                                 scope.launch { sendEverything() }
                             },
                         ) {

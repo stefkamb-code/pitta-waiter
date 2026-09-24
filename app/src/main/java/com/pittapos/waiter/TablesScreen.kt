@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.*
+import retrofit2.HttpException
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,10 +49,15 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
 
     suspend fun load() {
         try {
-            tables = ApiClient.create(serverUrl).getTables()
+            tables = ApiClient.create(serverUrl).getTables(prefs.pin)
             error = null
         } catch (e: Exception) {
-            error = "Δεν συνδέθηκε με το ταμείο — έλεγξε ότι είσαι στο ίδιο WiFi (⚙ ρυθμίσεις)"
+            // Ξεχωριστό μήνυμα για τον κωδικό: με το γενικό «έλεγξε το WiFi» ο σερβιτόρος έψαχνε
+            // δίκτυο ενώ το πρόβλημα ήταν ο κωδικός του — και το ταμείο ήταν μια χαρά.
+            error = if (e is HttpException && e.code() == 401)
+                "Λάθος κωδικός — άλλαξέ τον στις ρυθμίσεις (⚙)"
+            else
+                "Δεν συνδέθηκε με το ταμείο — έλεγξε ότι είσαι στο ίδιο WiFi (⚙ ρυθμίσεις)"
         }
         loading = false
     }
@@ -76,7 +82,7 @@ fun TablesScreen(prefs: AppPrefs, onOpenTable: (Int) -> Unit) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 eveningShift = try {
-                    ApiClient.create(serverUrl).getShift().isEveningShift
+                    ApiClient.create(serverUrl).getShift(prefs.pin).isEveningShift
                 } catch (e: Exception) {
                     null
                 }
